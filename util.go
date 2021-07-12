@@ -89,3 +89,8 @@ func ParseDBTag(value string) (name string, datatype string, option string) {
 
 	return
 }
+
+type contextKey string
+const (
+	ContextTransactionKey = "tx"
+)

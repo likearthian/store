@@ -42,7 +42,6 @@ func CreateMongoRepository(db *mongo.Database, collName string, model Model, opt
 		repository: repository{
 			Name:      opt.name,
 			model:     model,
-			tabledef:  model.GetTableDef(),
 			modelType: m,
 			modelTags: modelTags,
 		},
@@ -79,8 +78,8 @@ func (m *mongoRepository) init(values interface{}) error {
 	return nil
 }
 
-func (m *mongoRepository) Get(ctx context.Context, id interface{}, dest interface{}, options ...DataOption) error {
-	opt := &dataOption{}
+func (m *mongoRepository) Get(ctx context.Context, id interface{}, dest interface{}, options ...QueryOption) error {
+	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
 	}
@@ -96,8 +95,8 @@ func (m *mongoRepository) Get(ctx context.Context, id interface{}, dest interfac
     }
 
 	ctx = m.setTransactionContext(ctx, opt)
-
-	filter := bson.D{{Key: "_id", Value: id}}
+	tabledef := m.model.GetTableDef()
+	filter := bson.D{{Key: tabledef.KeyField, Value: id}}
 	err := m.collection.FindOne(ctx, filter).Decode(dest)
 	if err != nil {
 		return wrapMongoError(err)
@@ -106,8 +105,8 @@ func (m *mongoRepository) Get(ctx context.Context, id interface{}, dest interfac
 	return nil
 }
 
-func (m *mongoRepository) Select(ctx context.Context, filterMap map[string]interface{}, dest interface{}, options ...DataOption) error {
-	opt := &dataOption{}
+func (m *mongoRepository) Select(ctx context.Context, filterMap map[string]interface{}, dest interface{}, options ...QueryOption) error {
+	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
 	}
@@ -138,16 +137,16 @@ func (m *mongoRepository) Select(ctx context.Context, filterMap map[string]inter
 	return nil
 }
 
-func (m *mongoRepository) SQLQuery(ctx context.Context, strSql string, dest interface{}, options ...DataOption) error {
+func (m *mongoRepository) SQLQuery(ctx context.Context, dest interface{}, sqlStr string, args []interface{}, options ...QueryOption) error {
 	return fmt.Errorf("the database does not support SQL Query")
 }
 
-func (m *mongoRepository) SQLRun(ctx context.Context, strSql string, options ...DataOption) error {
+func (m *mongoRepository) SQLExec(ctx context.Context, sqlStr string, args []interface{}, options ...QueryOption) error {
 	return fmt.Errorf("the database does not support SQL Query")
 }
 
-func (m *mongoRepository) Put(ctx context.Context, value interface{}, options ...DataOption) (interface{}, error) {
-	opt := &dataOption{}
+func (m *mongoRepository) Put(ctx context.Context, value interface{}, options ...QueryOption) (interface{}, error) {
+	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
 	}
@@ -167,8 +166,8 @@ func (m *mongoRepository) Put(ctx context.Context, value interface{}, options ..
 	return res.InsertedID, nil
 }
 
-func (m *mongoRepository) Replace(ctx context.Context, id interface{}, value interface{}, options ...DataOption) error {
-	opt := &dataOption{}
+func (m *mongoRepository) Replace(ctx context.Context, id interface{}, value interface{}, options ...QueryOption) error {
+	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
 	}
@@ -184,7 +183,8 @@ func (m *mongoRepository) Replace(ctx context.Context, id interface{}, value int
 		return fmt.Errorf("cannot update value. value is not a type of %s", m.modelType.Name())
 	}
 
-	up, err := m.collection.ReplaceOne(ctx, bson.D{{Key:"_id", Value: id}}, value)
+	tabledef := m.model.GetTableDef()
+	up, err := m.collection.ReplaceOne(ctx, bson.D{{Key: tabledef.KeyField, Value: id}}, value)
 	if err != nil {
 		return wrapMongoError(err)
 	}
@@ -196,8 +196,8 @@ func (m *mongoRepository) Replace(ctx context.Context, id interface{}, value int
 	return nil
 }
 
-func (m *mongoRepository) Update(ctx context.Context, id interface{}, keyvals map[string]interface{}, options ...DataOption) error {
-	opt := &dataOption{}
+func (m *mongoRepository) Update(ctx context.Context, id interface{}, keyvals map[string]interface{}, options ...QueryOption) error {
+	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
 	}
@@ -216,8 +216,8 @@ func (m *mongoRepository) Update(ctx context.Context, id interface{}, keyvals ma
 	return nil
 }
 
-func (m *mongoRepository) Upsert(ctx context.Context, id interface{}, value interface{}, options ...DataOption) error {
-	opt := &dataOption{}
+func (m *mongoRepository) Upsert(ctx context.Context, id interface{}, value interface{}, options ...QueryOption) error {
+	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
 	}
@@ -233,7 +233,8 @@ func (m *mongoRepository) Upsert(ctx context.Context, id interface{}, value inte
 		return fmt.Errorf("cannot update value. value is not a type of %s", m.modelType.Name())
 	}
 
-	_, err := m.collection.ReplaceOne(ctx, bson.D{{Key: "_id", Value: id}}, value, mongoOptions.Replace().SetUpsert(true))
+	tabledef := m.model.GetTableDef()
+	_, err := m.collection.ReplaceOne(ctx, bson.D{{Key: tabledef.KeyField, Value: id}}, value, mongoOptions.Replace().SetUpsert(true))
 	if err != nil {
 		return wrapMongoError(err)
 	}
@@ -356,7 +357,7 @@ func (m *mongoRepository) parameterizedFilterCriteriaSlice(fieldname string, val
 	return filter, nil
 }
 
-func (m *mongoRepository) setTransactionContext(ctx context.Context, opt *dataOption) context.Context {
+func (m *mongoRepository) setTransactionContext(ctx context.Context, opt *queryOption) context.Context {
 	if opt.Tx != nil {
 		tx, ok := opt.Tx.(*mongoTransaction)
 		if ok {

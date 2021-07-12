@@ -19,14 +19,14 @@ func WithName(name string) RepositoryOption {
 	}
 }
 
-type DataOption func(o *dataOption)
+type QueryOption func(o *queryOption)
 
-type dataOption struct {
+type queryOption struct {
 	Tx Transaction
 }
 
-func WithTransaction(tx Transaction) DataOption {
-	return func(o *dataOption) {
+func WithTransaction(tx Transaction) QueryOption {
+	return func(o *queryOption) {
 		o.Tx = tx
 	}
 }

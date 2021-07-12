@@ -11,15 +11,15 @@ import (
 )
 
 type Repository interface {
-	Get(ctx context.Context, id interface{}, dest interface{}, options ...DataOption) error
-	Select(ctx context.Context, filter map[string]interface{}, dest interface{}, options ...DataOption) error
-	Put(ctx context.Context, value interface{}, options ...DataOption) (interface{}, error)
-	Replace(ctx context.Context, id interface{}, value interface{}, options ...DataOption) error
-	Update(ctx context.Context, id interface{}, keyvals map[string]interface{}, options ...DataOption) error
-	Upsert(ctx context.Context, id interface{}, value interface{}, options ...DataOption) error
+	Get(ctx context.Context, id interface{}, dest interface{}, options ...QueryOption) error
+	Select(ctx context.Context, filter map[string]interface{}, dest interface{}, options ...QueryOption) error
+	Put(ctx context.Context, value interface{}, options ...QueryOption) (interface{}, error)
+	Replace(ctx context.Context, id interface{}, value interface{}, options ...QueryOption) error
+	Update(ctx context.Context, id interface{}, keyvals map[string]interface{}, options ...QueryOption) error
+	Upsert(ctx context.Context, id interface{}, value interface{}, options ...QueryOption) error
 	//ParseRequestQueryIntoFilter(req interface{}) (interface{}, error)
-	SQLQuery(ctx context.Context, sqlStr string, dest interface{}, options ...DataOption) error
-	SQLRun(ctx context.Context, sqlStr string, options ...DataOption) error
+	SQLQuery(ctx context.Context, dest interface{}, sqlStr string, args []interface{}, options ...QueryOption) error
+	SQLExec(ctx context.Context, sqlStr string, args []interface{}, options ...QueryOption) error
 	Begin(ctx context.Context) (Transaction, error)
 }
 
@@ -27,7 +27,6 @@ type repository struct {
 	Name      string
 	modelType reflect.Type
 	model     Model
-	tabledef  TabledDef
 	modelTags map[string]int
 }
 

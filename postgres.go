@@ -36,7 +36,6 @@ func CreatePostgresRepository(db *sqlx.DB, tableName string, model Model, option
 		repository: repository{
 			Name:      opt.name,
 			model:     model,
-			tabledef:  model.GetTableDef(),
 			modelType: m,
 			modelTags: modelTags,
 		},
@@ -71,8 +70,8 @@ func (p *postgresRepository) init(values interface{}) error {
 	return nil
 }
 
-func (p *postgresRepository) Get(ctx context.Context, id interface{}, dest interface{}, options ...DataOption) error {
-	opt := &dataOption{}
+func (p *postgresRepository) Get(ctx context.Context, id interface{}, dest interface{}, options ...QueryOption) error {
+	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
 	}
@@ -110,8 +109,8 @@ func (p *postgresRepository) Get(ctx context.Context, id interface{}, dest inter
 	return tx.Commit()
 }
 
-func (p *postgresRepository) Select(ctx context.Context, filterMap map[string]interface{}, dest interface{}, options ...DataOption) error {
-	opt := &dataOption{}
+func (p *postgresRepository) Select(ctx context.Context, filterMap map[string]interface{}, dest interface{}, options ...QueryOption) error {
+	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
 	}
@@ -151,15 +150,15 @@ func (p *postgresRepository) Select(ctx context.Context, filterMap map[string]in
 	return nil
 }
 
-func (p *postgresRepository) SQLQuery(ctx context.Context, strSql string, dest interface{}, options ...DataOption) error {
+func (p *postgresRepository) SQLQuery(ctx context.Context, dest interface{}, sqlStr string, args []interface{}, options ...QueryOption) error {
 	return fmt.Errorf("not implemented yet")
 }
 
-func (p *postgresRepository) SQLRun(ctx context.Context, strSql string, options ...DataOption) error {
+func (p *postgresRepository) SQLExec(ctx context.Context, sqlStr string, args []interface{}, options ...QueryOption) error {
 	return fmt.Errorf("not implemented yet")
 }
 
-func (p *postgresRepository) Put(ctx context.Context, value interface{}, options ...DataOption) (interface{}, error) {
+func (p *postgresRepository) Put(ctx context.Context, value interface{}, options ...QueryOption) (interface{}, error) {
 	valTyp := reflect.TypeOf(value)
 	if valTyp != p.modelType {
 		return nil, fmt.Errorf("cannot put value. value is not a type of %s", p.modelType.Name())
@@ -168,28 +167,7 @@ func (p *postgresRepository) Put(ctx context.Context, value interface{}, options
 	return nil, nil
 }
 
-func (p *postgresRepository) Replace(ctx context.Context, id interface{}, value interface{}, options ...DataOption) error {
-	valTyp := reflect.TypeOf(value)
-	if valTyp.Kind() == reflect.Ptr {
-		valTyp = valTyp.Elem()
-	}
-
-	if valTyp != p.modelType {
-		return fmt.Errorf("cannot update value. value is not a type of %s", p.modelType.Name())
-	}
-
-
-
-	return nil
-}
-
-func (p *postgresRepository) Update(ctx context.Context, id interface{}, keyvals map[string]interface{}, options ...DataOption) error {
-
-
-	return nil
-}
-
-func (p *postgresRepository) Upsert(ctx context.Context, id interface{}, value interface{}, options ...DataOption) error {
+func (p *postgresRepository) Replace(ctx context.Context, id interface{}, value interface{}, options ...QueryOption) error {
 	valTyp := reflect.TypeOf(value)
 	if valTyp.Kind() == reflect.Ptr {
 		valTyp = valTyp.Elem()
@@ -202,7 +180,24 @@ func (p *postgresRepository) Upsert(ctx context.Context, id interface{}, value i
 	return nil
 }
 
-func (p *postgresRepository) Begin(_ context.Context) (Transaction, error) {
+func (p *postgresRepository) Update(ctx context.Context, id interface{}, keyvals map[string]interface{}, options ...QueryOption) error {
+	return nil
+}
+
+func (p *postgresRepository) Upsert(ctx context.Context, id interface{}, value interface{}, options ...QueryOption) error {
+	valTyp := reflect.TypeOf(value)
+	if valTyp.Kind() == reflect.Ptr {
+		valTyp = valTyp.Elem()
+	}
+
+	if valTyp != p.modelType {
+		return fmt.Errorf("cannot update value. value is not a type of %s", p.modelType.Name())
+	}
+
+	return nil
+}
+
+func (p *postgresRepository) Begin(ctx context.Context) (Transaction, error) {
 	tx, err := p.db.Beginx()
 	if err != nil {
 		return nil, err
@@ -279,7 +274,7 @@ func (p *postgresRepository) parameterizedFilterCriteriaSlice(fieldname string, 
     return where, value, nil
 }
 
-func (p *postgresRepository) createTransaction(opt *dataOption) (*sqlx.Tx, error) {
+func (p *postgresRepository) createTransaction(opt *queryOption) (*sqlx.Tx, error) {
 	if opt.Tx != nil {
 		if tx, ok := opt.Tx.(*sqlTransaction); ok {
 			return tx.Tx, nil
