@@ -138,6 +138,10 @@ func (p *postgresRepository) Select(ctx context.Context, filterMap map[string]in
 		return err
 	}
 
+	if opt.Tx == nil {
+		defer tx.Rollback()
+	}
+
 	columns := strings.Join(GetColumnsFromModelType(p.modelType, "db"), ",")
     tableDef := p.model.GetTableDef()
     qry := fmt.Sprintf("SELECT %s FROM %s.%s %s", columns, tableDef.Schema, tableDef.Name, filter)
@@ -147,7 +151,7 @@ func (p *postgresRepository) Select(ctx context.Context, filterMap map[string]in
     	return wrapPostgresError(err)
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 func (p *postgresRepository) SQLQuery(ctx context.Context, dest interface{}, sqlStr string, args []interface{}, options ...QueryOption) error {
@@ -158,30 +162,89 @@ func (p *postgresRepository) SQLExec(ctx context.Context, sqlStr string, args []
 	return fmt.Errorf("not implemented yet")
 }
 
-func (p *postgresRepository) Put(ctx context.Context, value interface{}, options ...QueryOption) (interface{}, error) {
+func (p *postgresRepository) Insert(ctx context.Context, value interface{}, options ...QueryOption) (interface{}, error) {
+	opt := &queryOption{}
+	for _, op := range options {
+		op(opt)
+	}
+
 	valTyp := reflect.TypeOf(value)
 	if valTyp != p.modelType {
 		return nil, fmt.Errorf("cannot put value. value is not a type of %s", p.modelType.Name())
 	}
 
-	return nil, nil
+	fieldMap, err := p.createFieldsAndValuesMapFromModelType(value, "db")
+	if err != nil {
+		return nil, err
+	}
+
+	var columns []string
+	var values []interface{}
+	for k, _ := range fieldMap {
+		columns = append(columns, k)
+		values = append(values, fieldMap[k])
+	}
+
+	tx, err := p.createTransaction(opt)
+	if err != nil {
+		return nil, err
+	}
+
+	if opt.Tx == nil {
+		defer tx.Rollback()
+	}
+
+	tabledef := p.model.GetTableDef()
+	qry := fmt.Sprintf("INSERT INTO %s.%s VALUES (?)", tabledef.Schema, tabledef.Name)
+	qry, args, err := sqlx.In(qry, values)
+	qry = tx.Rebind(qry)
+
+	_, err = tx.ExecContext(ctx, qry, args...)
+	if err != nil {
+		return nil, wrapPostgresError(err)
+	}
+
+	return nil, tx.Commit()
 }
 
 func (p *postgresRepository) Replace(ctx context.Context, id interface{}, value interface{}, options ...QueryOption) error {
-	valTyp := reflect.TypeOf(value)
-	if valTyp.Kind() == reflect.Ptr {
-		valTyp = valTyp.Elem()
-	}
-
-	if valTyp != p.modelType {
-		return fmt.Errorf("cannot update value. value is not a type of %s", p.modelType.Name())
-	}
-
-	return nil
+	return fmt.Errorf("this database doesn't support Replace")
 }
 
 func (p *postgresRepository) Update(ctx context.Context, id interface{}, keyvals map[string]interface{}, options ...QueryOption) error {
-	return nil
+	opt := &queryOption{}
+	for _, op := range options {
+		op(opt)
+	}
+
+	var columns []string
+	var values []interface{}
+	for k, _ := range keyvals {
+		columns = append(columns, k)
+		values = append(values, keyvals[k])
+	}
+
+	tx, err := p.createTransaction(opt)
+	if err != nil {
+		return err
+	}
+
+	if opt.Tx == nil {
+		defer tx.Rollback()
+	}
+
+	tabledef := p.model.GetTableDef()
+	qry := fmt.Sprintf("INSERT INTO %s.%s VALUES (?)", tabledef.Schema, tabledef.Name)
+
+	qry, args, err := sqlx.In(qry, values)
+	qry = tx.Rebind(qry)
+
+	_, err = tx.ExecContext(ctx, qry, args...)
+	if err != nil {
+		return wrapPostgresError(err)
+	}
+
+	return tx.Commit()
 }
 
 func (p *postgresRepository) Upsert(ctx context.Context, id interface{}, value interface{}, options ...QueryOption) error {

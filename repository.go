@@ -5,16 +5,12 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"reflect"
-	"strings"
-
-	"github.com/jmoiron/sqlx"
 )
 
 type Repository interface {
 	Get(ctx context.Context, id interface{}, dest interface{}, options ...QueryOption) error
 	Select(ctx context.Context, filter map[string]interface{}, dest interface{}, options ...QueryOption) error
-	Put(ctx context.Context, value interface{}, options ...QueryOption) (interface{}, error)
-	Replace(ctx context.Context, id interface{}, value interface{}, options ...QueryOption) error
+	Insert(ctx context.Context, value interface{}, options ...QueryOption) (interface{}, error)
 	Update(ctx context.Context, id interface{}, keyvals map[string]interface{}, options ...QueryOption) error
 	Upsert(ctx context.Context, id interface{}, value interface{}, options ...QueryOption) error
 	//ParseRequestQueryIntoFilter(req interface{}) (interface{}, error)
@@ -35,7 +31,7 @@ func (r repository) modelTagExists(name string) bool {
 	return ok
 }
 
-func (r *repository) createInsertSQLQueryFromModelType(value interface{}, fieldTag string) (query string, args []interface{}, err error) {
+func (r *repository) createFieldsAndValuesMapFromModelType(value interface{}, fieldTag string) (map[string]interface{}, error) {
 	dataVal := reflect.ValueOf(value)
 	valIsMap := false
 	var valKeys []reflect.Value
@@ -49,7 +45,7 @@ func (r *repository) createInsertSQLQueryFromModelType(value interface{}, fieldT
 		valKeys = dataVal.MapKeys()
 		for _, key := range dataVal.MapKeys() {
 			if key.Type().Kind() != reflect.String {
-				return "", nil, fmt.Errorf("value as map should have string key")
+				return nil, fmt.Errorf("value as map should have string key")
 			}
 		}
 	}
@@ -60,11 +56,10 @@ func (r *repository) createInsertSQLQueryFromModelType(value interface{}, fieldT
 	}
 
 	if !valIsMap && r.modelType.Name() != valType.Name() {
-		return "", nil, fmt.Errorf("value must be of %s type or a map, got %s type", r.modelType.Name(), valType.Name())
+		return nil, fmt.Errorf("value must be of %s type or a map, got %s type", r.modelType.Name(), valType.Name())
 	}
 
-	var columns []string
-	var values []interface{}
+	var result = make(map[string]interface{})
 	for i := 0; i < r.modelType.NumField(); i++ {
 		var val interface{}
 		field := r.modelType.Field(i)
@@ -125,13 +120,10 @@ func (r *repository) createInsertSQLQueryFromModelType(value interface{}, fieldT
 			val = buffVal
 		}
 
-		columns = append(columns, col)
-		values = append(values, val)
+		result[col] = val
 	}
 
-	tableDef := r.model.GetTableDef()
-	qry := fmt.Sprintf("INSERT INTO %s.%s (%s) VALUES (?)", tableDef.Schema, tableDef.Name, strings.Join(columns, ","))
-	return sqlx.In(qry, values)
+	return result, nil
 }
 
 func createModelTags(model reflect.Type, tag string) map[string]int {

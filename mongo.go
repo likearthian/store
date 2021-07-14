@@ -64,14 +64,16 @@ func (m *mongoRepository) init(values interface{}) error {
 		return fmt.Errorf("value to init should be a slice")
 	}
 
-	if dataVal.Elem().Kind() != m.modelType.Kind() {
+	if dataVal.Type().Elem().Kind() != m.modelType.Kind() {
 		return fmt.Errorf("values to init should be []%s, got %t", m.modelType.Name(), values)
 	}
 
 	for i := 0; i < dataVal.Len(); i++ {
 		sval := dataVal.Index(i)
-		if _, err := m.Put(context.Background(), sval.Interface()); err != nil {
-			return err
+		if _, err := m.Insert(context.Background(), sval.Interface()); err != nil {
+			if !errors.Is(err, ErrKeyAlreadyExists) {
+				return err
+			}
 		}
 	}
 
@@ -145,7 +147,7 @@ func (m *mongoRepository) SQLExec(ctx context.Context, sqlStr string, args []int
 	return fmt.Errorf("the database does not support SQL Query")
 }
 
-func (m *mongoRepository) Put(ctx context.Context, value interface{}, options ...QueryOption) (interface{}, error) {
+func (m *mongoRepository) Insert(ctx context.Context, value interface{}, options ...QueryOption) (interface{}, error) {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
