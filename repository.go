@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 type Repository interface {
@@ -130,12 +131,12 @@ func createModelTags(model reflect.Type, tag string) map[string]int {
 	modelTags := make(map[string]int)
 	for i := 0; i < model.NumField(); i++ {
 		field := model.Field(i)
-		tagName := field.Tag.Get(tag)
-		if tagName == "" {
-			//tagName = ToDelimited(field.Name, '_')
+		tagArr := strings.Split(field.Tag.Get(tag), ",")
+		if len(tagArr) == 0 {
 			continue
 		}
 
+		tagName := strings.TrimSpace(tagArr[0])
 		modelTags[tagName] = i
 	}
 

@@ -88,13 +88,13 @@ func (m *mongoRepository) Get(ctx context.Context, id interface{}, dest interfac
 
 	destType := reflect.TypeOf(dest)
 
-    if destType.Kind() != reflect.Ptr {
-        return fmt.Errorf("dest must be a pointer to a %s", m.modelType.Name())
-    }
+	if destType.Kind() != reflect.Ptr {
+		return fmt.Errorf("dest must be a pointer to a %s", m.modelType.Name())
+	}
 
-    if destType.Elem() != m.modelType {
-        return fmt.Errorf("dest must be a pointer to a %s", m.modelType.Name())
-    }
+	if destType.Elem() != m.modelType {
+		return fmt.Errorf("dest must be a pointer to a %s", m.modelType.Name())
+	}
 
 	ctx = m.setTransactionContext(ctx, opt)
 	tabledef := m.model.GetTableDef()
@@ -115,17 +115,18 @@ func (m *mongoRepository) Select(ctx context.Context, filterMap map[string]inter
 
 	destType := reflect.TypeOf(dest)
 
-    if destType.Kind() != reflect.Ptr {
-        return fmt.Errorf("dest must be a pointer to a slice of %s or *%s", m.modelType.Name(), m.modelType.Name())
-    }
+	if destType.Kind() != reflect.Ptr {
+		return fmt.Errorf("dest must be a pointer to a slice of %s or *%s", m.modelType.Name(), m.modelType.Name())
+	}
 
-    if destType.Elem().Kind() != reflect.Slice {
-        return fmt.Errorf("dest must be a pointer to a slice of %s or *%s", m.modelType.Name(), m.modelType.Name())
-    }
+	if destType.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("dest must be a pointer to a slice of %s or *%s", m.modelType.Name(), m.modelType.Name())
+	}
 
 	ctx = m.setTransactionContext(ctx, opt)
 
 	filter := m.parseFilterMapIntoFilter(filterMap)
+
 	cur, err := m.collection.Find(ctx, filter)
 	if err != nil {
 		return wrapMongoError(err)
@@ -313,10 +314,6 @@ func (m *mongoRepository) parseFilterMapIntoFilter(filterMap map[string]interfac
 	var filter = bson.D{}
 
 	for k, v := range filterMap {
-		if !m.modelTagExists(k) {
-			continue
-		}
-
 		vval := reflect.ValueOf(v)
 		val := vval.Interface()
 		if vval.Kind() != reflect.Slice {
@@ -390,7 +387,7 @@ func wrapMongoError(err error) error {
 
 type mongoTransaction struct {
 	session mongo.Session
-	sctx mongo.SessionContext
+	sctx    mongo.SessionContext
 }
 
 func (tx *mongoTransaction) Rollback(ctx context.Context) error {
