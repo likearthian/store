@@ -13,13 +13,13 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/writeconcern"
 )
 
-type mongoRepository struct {
+type mongoRepository[T Model] struct {
 	repository
 	db         *mongo.Database
 	collection *mongo.Collection
 }
 
-func CreateMongoRepository(db *mongo.Database, collName string, model Model, options ...RepositoryOption) (Repository, error) {
+func CreateMongoRepository[T Model](db *mongo.Database, collName string, options ...RepositoryOption) (Repository[T], error) {
 	opt := &option{}
 	for _, op := range options {
 		op(opt)
@@ -29,6 +29,7 @@ func CreateMongoRepository(db *mongo.Database, collName string, model Model, opt
 		opt.name = collName
 	}
 
+	var model T
 	m := reflect.TypeOf(model)
 	if m.Kind() == reflect.Ptr {
 		m = m.Elem()
@@ -38,7 +39,7 @@ func CreateMongoRepository(db *mongo.Database, collName string, model Model, opt
 
 	collection := db.Collection(collName)
 
-	repo := &mongoRepository{
+	repo := &mongoRepository[T]{
 		repository: repository{
 			Name:      opt.name,
 			model:     model,
@@ -58,7 +59,7 @@ func CreateMongoRepository(db *mongo.Database, collName string, model Model, opt
 	return repo, nil
 }
 
-func (m *mongoRepository) init(values interface{}) error {
+func (m *mongoRepository[T]) init(values any) error {
 	dataVal := reflect.ValueOf(values)
 	if dataVal.Kind() != reflect.Slice {
 		return fmt.Errorf("value to init should be a slice")
@@ -70,7 +71,7 @@ func (m *mongoRepository) init(values interface{}) error {
 
 	for i := 0; i < dataVal.Len(); i++ {
 		sval := dataVal.Index(i)
-		if _, err := m.Insert(context.Background(), sval.Interface()); err != nil {
+		if _, err := m.Insert(context.Background(), sval.Interface().(T)); err != nil {
 			if !errors.Is(err, ErrKeyAlreadyExists) {
 				return err
 			}
@@ -80,20 +81,10 @@ func (m *mongoRepository) init(values interface{}) error {
 	return nil
 }
 
-func (m *mongoRepository) Get(ctx context.Context, id interface{}, dest interface{}, options ...QueryOption) error {
+func (m *mongoRepository[T]) Get(ctx context.Context, id any, dest *T, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
-	}
-
-	destType := reflect.TypeOf(dest)
-
-	if destType.Kind() != reflect.Ptr {
-		return fmt.Errorf("dest must be a pointer to a %s", m.modelType.Name())
-	}
-
-	if destType.Elem() != m.modelType {
-		return fmt.Errorf("dest must be a pointer to a %s", m.modelType.Name())
 	}
 
 	ctx = m.setTransactionContext(ctx, opt)
@@ -107,20 +98,10 @@ func (m *mongoRepository) Get(ctx context.Context, id interface{}, dest interfac
 	return nil
 }
 
-func (m *mongoRepository) Select(ctx context.Context, filterMap map[string]interface{}, dest interface{}, options ...QueryOption) error {
+func (m *mongoRepository[T]) Select(ctx context.Context, filterMap map[string]any, dest *[]T, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
-	}
-
-	destType := reflect.TypeOf(dest)
-
-	if destType.Kind() != reflect.Ptr {
-		return fmt.Errorf("dest must be a pointer to a slice of %s or *%s", m.modelType.Name(), m.modelType.Name())
-	}
-
-	if destType.Elem().Kind() != reflect.Slice {
-		return fmt.Errorf("dest must be a pointer to a slice of %s or *%s", m.modelType.Name(), m.modelType.Name())
 	}
 
 	ctx = m.setTransactionContext(ctx, opt)
@@ -140,26 +121,21 @@ func (m *mongoRepository) Select(ctx context.Context, filterMap map[string]inter
 	return nil
 }
 
-func (m *mongoRepository) SQLQuery(ctx context.Context, dest interface{}, sqlStr string, args []interface{}, options ...QueryOption) error {
+func (m *mongoRepository[T]) SQLQuery(ctx context.Context, dest *[]T, sqlStr string, args []interface{}, options ...QueryOption) error {
 	return fmt.Errorf("the database does not support SQL Query")
 }
 
-func (m *mongoRepository) SQLExec(ctx context.Context, sqlStr string, args []interface{}, options ...QueryOption) error {
+func (m *mongoRepository[T]) SQLExec(ctx context.Context, sqlStr string, args []interface{}, options ...QueryOption) error {
 	return fmt.Errorf("the database does not support SQL Query")
 }
 
-func (m *mongoRepository) Insert(ctx context.Context, value interface{}, options ...QueryOption) (interface{}, error) {
+func (m *mongoRepository[T]) Insert(ctx context.Context, value T, options ...QueryOption) (any, error) {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
 	}
 
 	ctx = m.setTransactionContext(ctx, opt)
-
-	valTyp := reflect.TypeOf(value)
-	if valTyp != m.modelType {
-		return nil, fmt.Errorf("cannot put value. value is not a type of %s", m.modelType.Name())
-	}
 
 	res, err := m.collection.InsertOne(ctx, value)
 	if err != nil {
@@ -169,22 +145,13 @@ func (m *mongoRepository) Insert(ctx context.Context, value interface{}, options
 	return res.InsertedID, nil
 }
 
-func (m *mongoRepository) Replace(ctx context.Context, id interface{}, value interface{}, options ...QueryOption) error {
+func (m *mongoRepository[T]) Replace(ctx context.Context, id any, value T, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
 	}
 
 	ctx = m.setTransactionContext(ctx, opt)
-
-	valTyp := reflect.TypeOf(value)
-	if valTyp.Kind() == reflect.Ptr {
-		valTyp = valTyp.Elem()
-	}
-
-	if valTyp != m.modelType {
-		return fmt.Errorf("cannot update value. value is not a type of %s", m.modelType.Name())
-	}
 
 	tabledef := m.model.GetTableDef()
 	up, err := m.collection.ReplaceOne(ctx, bson.D{{Key: tabledef.KeyField, Value: id}}, value)
@@ -199,7 +166,7 @@ func (m *mongoRepository) Replace(ctx context.Context, id interface{}, value int
 	return nil
 }
 
-func (m *mongoRepository) Update(ctx context.Context, id interface{}, keyvals map[string]interface{}, options ...QueryOption) error {
+func (m *mongoRepository[T]) Update(ctx context.Context, id any, keyvals map[string]any, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
@@ -219,22 +186,13 @@ func (m *mongoRepository) Update(ctx context.Context, id interface{}, keyvals ma
 	return nil
 }
 
-func (m *mongoRepository) Upsert(ctx context.Context, id interface{}, value interface{}, options ...QueryOption) error {
+func (m *mongoRepository[T]) Upsert(ctx context.Context, id any, value T, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
 	}
 
 	ctx = m.setTransactionContext(ctx, opt)
-
-	valTyp := reflect.TypeOf(value)
-	if valTyp.Kind() == reflect.Ptr {
-		valTyp = valTyp.Elem()
-	}
-
-	if valTyp != m.modelType {
-		return fmt.Errorf("cannot update value. value is not a type of %s", m.modelType.Name())
-	}
 
 	tabledef := m.model.GetTableDef()
 	_, err := m.collection.ReplaceOne(ctx, bson.D{{Key: tabledef.KeyField, Value: id}}, value, mongoOptions.Replace().SetUpsert(true))
@@ -245,7 +203,7 @@ func (m *mongoRepository) Upsert(ctx context.Context, id interface{}, value inte
 	return nil
 }
 
-func (m *mongoRepository) Begin(ctx context.Context) (Transaction, error) {
+func (m *mongoRepository[T]) Begin(ctx context.Context) (Transaction, error) {
 	session, err := m.db.Client().StartSession()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mongodb session. %s", err.Error())
@@ -268,7 +226,7 @@ func (m *mongoRepository) Begin(ctx context.Context) (Transaction, error) {
 	}, nil
 }
 
-func (m *mongoRepository) createUpdateParam(keyvals map[string]interface{}) interface{} {
+func (m *mongoRepository[T]) createUpdateParam(keyvals map[string]interface{}) interface{} {
 	update := bson.M{}
 	for k, v := range keyvals {
 		update[k] = v
@@ -277,7 +235,7 @@ func (m *mongoRepository) createUpdateParam(keyvals map[string]interface{}) inte
 	return bson.M{"$set": update}
 }
 
-func (m *mongoRepository) ParseRequestQueryIntoFilter(req interface{}) (interface{}, error) {
+func (m *mongoRepository[T]) ParseRequestQueryIntoFilter(req interface{}) (interface{}, error) {
 	reqType := reflect.TypeOf(req)
 	reqVal := reflect.ValueOf(req)
 	if reqType.Kind() == reflect.Ptr {
@@ -310,7 +268,7 @@ func (m *mongoRepository) ParseRequestQueryIntoFilter(req interface{}) (interfac
 	return filter, nil
 }
 
-func (m *mongoRepository) parseFilterMapIntoFilter(filterMap map[string]interface{}) bson.D {
+func (m *mongoRepository[T]) parseFilterMapIntoFilter(filterMap map[string]any) bson.D {
 	var filter = bson.D{}
 
 	for k, v := range filterMap {
@@ -331,7 +289,7 @@ func (m *mongoRepository) parseFilterMapIntoFilter(filterMap map[string]interfac
 	return filter
 }
 
-func (m *mongoRepository) parameterizedFilterCriteriaSlice(fieldname string, values interface{}) (bson.E, error) {
+func (m *mongoRepository[T]) parameterizedFilterCriteriaSlice(fieldname string, values any) (bson.E, error) {
 	vtype := reflect.TypeOf(values)
 	if vtype.Kind() == reflect.Ptr {
 		vtype = vtype.Elem()
@@ -356,7 +314,7 @@ func (m *mongoRepository) parameterizedFilterCriteriaSlice(fieldname string, val
 	return filter, nil
 }
 
-func (m *mongoRepository) setTransactionContext(ctx context.Context, opt *queryOption) context.Context {
+func (m *mongoRepository[T]) setTransactionContext(ctx context.Context, opt *queryOption) context.Context {
 	if opt.Tx != nil {
 		tx, ok := opt.Tx.(*mongoTransaction)
 		if ok {

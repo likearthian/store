@@ -4,7 +4,7 @@ type RepositoryOption func(o *option)
 
 type option struct {
 	initValues interface{}
-	name string
+	name       string
 }
 
 func InitWith(values interface{}) RepositoryOption {
