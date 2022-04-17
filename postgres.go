@@ -9,13 +9,13 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-type postgresRepository[T Model] struct {
+type postgresRepository[K comparable, T Model] struct {
 	repository
 	db        *sqlx.DB
 	tableName string
 }
 
-func CreatePostgresRepository[T Model](db *sqlx.DB, tableName string, model Model, options ...RepositoryOption) (Repository[T], error) {
+func CreatePostgresRepository[K comparable, T Model](db *sqlx.DB, tableName string, model Model, options ...RepositoryOption) (Repository[K, T], error) {
 	opt := &option{}
 	for _, op := range options {
 		op(opt)
@@ -32,7 +32,7 @@ func CreatePostgresRepository[T Model](db *sqlx.DB, tableName string, model Mode
 
 	modelTags := createModelTags(m, "db")
 
-	repo := &postgresRepository[T]{
+	repo := &postgresRepository[K, T]{
 		repository: repository{
 			Name:      opt.name,
 			model:     model,
@@ -52,7 +52,7 @@ func CreatePostgresRepository[T Model](db *sqlx.DB, tableName string, model Mode
 	return repo, nil
 }
 
-func (p *postgresRepository[T]) init(values any) error {
+func (p *postgresRepository[K, T]) init(values any) error {
 	dataVal := reflect.ValueOf(values)
 	if dataVal.Kind() != reflect.Slice {
 		return fmt.Errorf("value to init should be a slice")
@@ -70,7 +70,7 @@ func (p *postgresRepository[T]) init(values any) error {
 	return nil
 }
 
-func (p *postgresRepository[T]) Get(ctx context.Context, id any, dest *T, options ...QueryOption) error {
+func (p *postgresRepository[K, T]) Get(ctx context.Context, id K, dest *T, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
@@ -100,7 +100,7 @@ func (p *postgresRepository[T]) Get(ctx context.Context, id any, dest *T, option
 	return tx.Commit()
 }
 
-func (p *postgresRepository[T]) Select(ctx context.Context, filterMap map[string]any, dest *[]T, options ...QueryOption) error {
+func (p *postgresRepository[K, T]) Select(ctx context.Context, filterMap map[string]any, dest *[]T, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
@@ -136,15 +136,15 @@ func (p *postgresRepository[T]) Select(ctx context.Context, filterMap map[string
 	return tx.Commit()
 }
 
-func (p *postgresRepository[T]) SQLQuery(ctx context.Context, dest *[]T, sqlStr string, args []interface{}, options ...QueryOption) error {
+func (p *postgresRepository[K, T]) SQLQuery(ctx context.Context, dest *[]T, sqlStr string, args []interface{}, options ...QueryOption) error {
 	return fmt.Errorf("not implemented yet")
 }
 
-func (p *postgresRepository[T]) SQLExec(ctx context.Context, sqlStr string, args []interface{}, options ...QueryOption) error {
+func (p *postgresRepository[K, T]) SQLExec(ctx context.Context, sqlStr string, args []interface{}, options ...QueryOption) error {
 	return fmt.Errorf("not implemented yet")
 }
 
-func (p *postgresRepository[T]) Insert(ctx context.Context, value T, options ...QueryOption) (any, error) {
+func (p *postgresRepository[K, T]) Insert(ctx context.Context, value T, options ...QueryOption) (any, error) {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
@@ -189,11 +189,11 @@ func (p *postgresRepository[T]) Insert(ctx context.Context, value T, options ...
 	return nil, tx.Commit()
 }
 
-func (p *postgresRepository[T]) Replace(ctx context.Context, id any, value T, options ...QueryOption) error {
+func (p *postgresRepository[K, T]) Replace(ctx context.Context, id K, value T, options ...QueryOption) error {
 	return fmt.Errorf("this database doesn't support Replace")
 }
 
-func (p *postgresRepository[T]) Update(ctx context.Context, id any, keyvals map[string]any, options ...QueryOption) error {
+func (p *postgresRepository[K, T]) Update(ctx context.Context, id K, keyvals map[string]any, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
@@ -229,7 +229,7 @@ func (p *postgresRepository[T]) Update(ctx context.Context, id any, keyvals map[
 	return tx.Commit()
 }
 
-func (p *postgresRepository[T]) Upsert(ctx context.Context, id any, value T, options ...QueryOption) error {
+func (p *postgresRepository[K, T]) Upsert(ctx context.Context, id K, value T, options ...QueryOption) error {
 	valTyp := reflect.TypeOf(value)
 	if valTyp.Kind() == reflect.Ptr {
 		valTyp = valTyp.Elem()
@@ -242,7 +242,7 @@ func (p *postgresRepository[T]) Upsert(ctx context.Context, id any, value T, opt
 	return nil
 }
 
-func (p *postgresRepository[T]) Begin(ctx context.Context) (Transaction, error) {
+func (p *postgresRepository[K, T]) Begin(ctx context.Context) (Transaction, error) {
 	tx, err := p.db.Beginx()
 	if err != nil {
 		return nil, err
@@ -251,12 +251,12 @@ func (p *postgresRepository[T]) Begin(ctx context.Context) (Transaction, error) 
 	return &sqlTransaction{Tx: tx}, nil
 }
 
-func (p *postgresRepository[T]) createUpdateParam(keyvals map[string]interface{}) interface{} {
+func (p *postgresRepository[K, T]) createUpdateParam(keyvals map[string]interface{}) interface{} {
 
 	return nil
 }
 
-func (p *postgresRepository[T]) parseFilterMapIntoWhereClause(filterMap map[string]interface{}) (string, []interface{}, error) {
+func (p *postgresRepository[K, T]) parseFilterMapIntoWhereClause(filterMap map[string]interface{}) (string, []interface{}, error) {
 	where := ""
 	var args []interface{}
 	for k, v := range filterMap {
@@ -289,7 +289,7 @@ func (p *postgresRepository[T]) parseFilterMapIntoWhereClause(filterMap map[stri
 	return sqlx.In(where, args...)
 }
 
-func (p *postgresRepository[T]) parameterizedFilterCriteriaSlice(fieldname string, values interface{}) (string, interface{}, error) {
+func (p *postgresRepository[K, T]) parameterizedFilterCriteriaSlice(fieldname string, values interface{}) (string, interface{}, error) {
 	where := fieldname
 	vtype := reflect.TypeOf(values)
 	if vtype.Kind() == reflect.Ptr {
@@ -317,7 +317,7 @@ func (p *postgresRepository[T]) parameterizedFilterCriteriaSlice(fieldname strin
 	return where, value, nil
 }
 
-func (p *postgresRepository[T]) createTransaction(opt *queryOption) (*sqlx.Tx, error) {
+func (p *postgresRepository[K, T]) createTransaction(opt *queryOption) (*sqlx.Tx, error) {
 	if opt.Tx != nil {
 		if tx, ok := opt.Tx.(*sqlTransaction); ok {
 			return tx.Tx, nil

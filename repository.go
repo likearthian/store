@@ -8,12 +8,12 @@ import (
 	"strings"
 )
 
-type Repository[T Model] interface {
-	Get(ctx context.Context, id any, dest *T, options ...QueryOption) error
+type Repository[K comparable, T Model] interface {
+	Get(ctx context.Context, id K, dest *T, options ...QueryOption) error
 	Select(ctx context.Context, filter map[string]any, dest *[]T, options ...QueryOption) error
 	Insert(ctx context.Context, value T, options ...QueryOption) (any, error)
-	Update(ctx context.Context, id any, keyvals map[string]any, options ...QueryOption) error
-	Upsert(ctx context.Context, id any, value T, options ...QueryOption) error
+	Update(ctx context.Context, id K, keyvals map[string]any, options ...QueryOption) error
+	Upsert(ctx context.Context, id K, value T, options ...QueryOption) error
 	//ParseRequestQueryIntoFilter(req interface{}) (interface{}, error)
 	SQLQuery(ctx context.Context, dest *[]T, sqlStr string, args []interface{}, options ...QueryOption) error
 	SQLExec(ctx context.Context, sqlStr string, args []interface{}, options ...QueryOption) error

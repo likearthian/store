@@ -13,13 +13,13 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/writeconcern"
 )
 
-type mongoRepository[T Model] struct {
+type mongoRepository[K comparable, T Model] struct {
 	repository
 	db         *mongo.Database
 	collection *mongo.Collection
 }
 
-func CreateMongoRepository[T Model](db *mongo.Database, collName string, options ...RepositoryOption) (Repository[T], error) {
+func CreateMongoRepository[K comparable, T Model](db *mongo.Database, collName string, options ...RepositoryOption) (Repository[K, T], error) {
 	opt := &option{}
 	for _, op := range options {
 		op(opt)
@@ -39,7 +39,7 @@ func CreateMongoRepository[T Model](db *mongo.Database, collName string, options
 
 	collection := db.Collection(collName)
 
-	repo := &mongoRepository[T]{
+	repo := &mongoRepository[K, T]{
 		repository: repository{
 			Name:      opt.name,
 			model:     model,
@@ -59,7 +59,7 @@ func CreateMongoRepository[T Model](db *mongo.Database, collName string, options
 	return repo, nil
 }
 
-func (m *mongoRepository[T]) init(values any) error {
+func (m *mongoRepository[K, T]) init(values any) error {
 	dataVal := reflect.ValueOf(values)
 	if dataVal.Kind() != reflect.Slice {
 		return fmt.Errorf("value to init should be a slice")
@@ -81,7 +81,7 @@ func (m *mongoRepository[T]) init(values any) error {
 	return nil
 }
 
-func (m *mongoRepository[T]) Get(ctx context.Context, id any, dest *T, options ...QueryOption) error {
+func (m *mongoRepository[K, T]) Get(ctx context.Context, id K, dest *T, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
@@ -98,7 +98,7 @@ func (m *mongoRepository[T]) Get(ctx context.Context, id any, dest *T, options .
 	return nil
 }
 
-func (m *mongoRepository[T]) Select(ctx context.Context, filterMap map[string]any, dest *[]T, options ...QueryOption) error {
+func (m *mongoRepository[K, T]) Select(ctx context.Context, filterMap map[string]any, dest *[]T, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
@@ -121,15 +121,15 @@ func (m *mongoRepository[T]) Select(ctx context.Context, filterMap map[string]an
 	return nil
 }
 
-func (m *mongoRepository[T]) SQLQuery(ctx context.Context, dest *[]T, sqlStr string, args []interface{}, options ...QueryOption) error {
+func (m *mongoRepository[K, T]) SQLQuery(ctx context.Context, dest *[]T, sqlStr string, args []interface{}, options ...QueryOption) error {
 	return fmt.Errorf("the database does not support SQL Query")
 }
 
-func (m *mongoRepository[T]) SQLExec(ctx context.Context, sqlStr string, args []interface{}, options ...QueryOption) error {
+func (m *mongoRepository[K, T]) SQLExec(ctx context.Context, sqlStr string, args []interface{}, options ...QueryOption) error {
 	return fmt.Errorf("the database does not support SQL Query")
 }
 
-func (m *mongoRepository[T]) Insert(ctx context.Context, value T, options ...QueryOption) (any, error) {
+func (m *mongoRepository[K, T]) Insert(ctx context.Context, value T, options ...QueryOption) (any, error) {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
@@ -145,7 +145,7 @@ func (m *mongoRepository[T]) Insert(ctx context.Context, value T, options ...Que
 	return res.InsertedID, nil
 }
 
-func (m *mongoRepository[T]) Replace(ctx context.Context, id any, value T, options ...QueryOption) error {
+func (m *mongoRepository[K, T]) Replace(ctx context.Context, id K, value T, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
@@ -166,7 +166,7 @@ func (m *mongoRepository[T]) Replace(ctx context.Context, id any, value T, optio
 	return nil
 }
 
-func (m *mongoRepository[T]) Update(ctx context.Context, id any, keyvals map[string]any, options ...QueryOption) error {
+func (m *mongoRepository[K, T]) Update(ctx context.Context, id K, keyvals map[string]any, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
@@ -186,7 +186,7 @@ func (m *mongoRepository[T]) Update(ctx context.Context, id any, keyvals map[str
 	return nil
 }
 
-func (m *mongoRepository[T]) Upsert(ctx context.Context, id any, value T, options ...QueryOption) error {
+func (m *mongoRepository[K, T]) Upsert(ctx context.Context, id K, value T, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
@@ -203,7 +203,7 @@ func (m *mongoRepository[T]) Upsert(ctx context.Context, id any, value T, option
 	return nil
 }
 
-func (m *mongoRepository[T]) Begin(ctx context.Context) (Transaction, error) {
+func (m *mongoRepository[K, T]) Begin(ctx context.Context) (Transaction, error) {
 	session, err := m.db.Client().StartSession()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mongodb session. %s", err.Error())
@@ -226,7 +226,7 @@ func (m *mongoRepository[T]) Begin(ctx context.Context) (Transaction, error) {
 	}, nil
 }
 
-func (m *mongoRepository[T]) createUpdateParam(keyvals map[string]interface{}) interface{} {
+func (m *mongoRepository[K, T]) createUpdateParam(keyvals map[string]interface{}) interface{} {
 	update := bson.M{}
 	for k, v := range keyvals {
 		update[k] = v
@@ -235,7 +235,7 @@ func (m *mongoRepository[T]) createUpdateParam(keyvals map[string]interface{}) i
 	return bson.M{"$set": update}
 }
 
-func (m *mongoRepository[T]) ParseRequestQueryIntoFilter(req interface{}) (interface{}, error) {
+func (m *mongoRepository[K, T]) ParseRequestQueryIntoFilter(req interface{}) (interface{}, error) {
 	reqType := reflect.TypeOf(req)
 	reqVal := reflect.ValueOf(req)
 	if reqType.Kind() == reflect.Ptr {
@@ -268,7 +268,7 @@ func (m *mongoRepository[T]) ParseRequestQueryIntoFilter(req interface{}) (inter
 	return filter, nil
 }
 
-func (m *mongoRepository[T]) parseFilterMapIntoFilter(filterMap map[string]any) bson.D {
+func (m *mongoRepository[K, T]) parseFilterMapIntoFilter(filterMap map[string]any) bson.D {
 	var filter = bson.D{}
 
 	for k, v := range filterMap {
@@ -289,7 +289,7 @@ func (m *mongoRepository[T]) parseFilterMapIntoFilter(filterMap map[string]any) 
 	return filter
 }
 
-func (m *mongoRepository[T]) parameterizedFilterCriteriaSlice(fieldname string, values any) (bson.E, error) {
+func (m *mongoRepository[K, T]) parameterizedFilterCriteriaSlice(fieldname string, values any) (bson.E, error) {
 	vtype := reflect.TypeOf(values)
 	if vtype.Kind() == reflect.Ptr {
 		vtype = vtype.Elem()
@@ -314,7 +314,7 @@ func (m *mongoRepository[T]) parameterizedFilterCriteriaSlice(fieldname string, 
 	return filter, nil
 }
 
-func (m *mongoRepository[T]) setTransactionContext(ctx context.Context, opt *queryOption) context.Context {
+func (m *mongoRepository[K, T]) setTransactionContext(ctx context.Context, opt *queryOption) context.Context {
 	if opt.Tx != nil {
 		tx, ok := opt.Tx.(*mongoTransaction)
 		if ok {
