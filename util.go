@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-type Transaction interface{
+type Transaction interface {
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error
 }
@@ -91,6 +91,37 @@ func ParseDBTag(value string) (name string, datatype string, option string) {
 }
 
 type contextKey string
+
 const (
 	ContextTransactionKey = "tx"
 )
+
+func Map[In any, Out any](list []In, mapFn func(val In) Out) []Out {
+	var newSlice = make([]Out, len(list))
+	for i, val := range list {
+		newSlice[i] = mapFn(val)
+	}
+
+	return newSlice
+}
+
+func SliceContains[T comparable](list []T, val T) bool {
+	for _, item := range list {
+		if item == val {
+			return true
+		}
+	}
+
+	return false
+}
+
+func Filter[T any](slice []T, filterFunc func(val T) bool) []T {
+	var newSlice []T
+	for i, val := range slice {
+		if filterFunc(val) {
+			newSlice = append(newSlice, slice[i])
+		}
+	}
+
+	return newSlice
+}

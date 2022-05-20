@@ -136,7 +136,7 @@ func (p *postgresRepository[K, T]) Select(ctx context.Context, filterMap map[str
 	return tx.Commit()
 }
 
-func (p *postgresRepository[K, T]) SQLQuery(ctx context.Context, dest *[]T, sqlStr string, args []interface{}, options ...QueryOption) error {
+func (p *postgresRepository[K, T]) SQLQuery(ctx context.Context, dest any, sqlStr string, args []interface{}, options ...QueryOption) error {
 	return fmt.Errorf("not implemented yet")
 }
 
@@ -144,20 +144,22 @@ func (p *postgresRepository[K, T]) SQLExec(ctx context.Context, sqlStr string, a
 	return fmt.Errorf("not implemented yet")
 }
 
-func (p *postgresRepository[K, T]) Insert(ctx context.Context, value T, options ...QueryOption) (any, error) {
+func (p *postgresRepository[K, T]) Insert(ctx context.Context, value T, options ...QueryOption) (K, error) {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
 	}
 
+	var zeroKey K
+
 	valTyp := reflect.TypeOf(value)
 	if valTyp != p.modelType {
-		return nil, fmt.Errorf("cannot put value. value is not a type of %s", p.modelType.Name())
+		return zeroKey, fmt.Errorf("cannot put value. value is not a type of %s", p.modelType.Name())
 	}
 
 	fieldMap, err := p.createFieldsAndValuesMapFromModelType(value, "db")
 	if err != nil {
-		return nil, err
+		return zeroKey, err
 	}
 
 	var columns []string
@@ -165,6 +167,51 @@ func (p *postgresRepository[K, T]) Insert(ctx context.Context, value T, options 
 	for k, _ := range fieldMap {
 		columns = append(columns, k)
 		values = append(values, fieldMap[k])
+	}
+
+	tx, err := p.createTransaction(opt)
+	if err != nil {
+		return zeroKey, err
+	}
+
+	if opt.Tx == nil {
+		defer tx.Rollback()
+	}
+
+	tabledef := p.model.GetTableDef()
+	qry := fmt.Sprintf("INSERT INTO %s.%s VALUES (?)", tabledef.Schema, tabledef.Name)
+	qry, args, err := sqlx.In(qry, values)
+	qry = tx.Rebind(qry)
+
+	_, err = tx.ExecContext(ctx, qry, args...)
+	if err != nil {
+		return zeroKey, wrapPostgresError(err)
+	}
+
+	return zeroKey, tx.Commit()
+}
+
+func (p *postgresRepository[K, T]) InsertAll(ctx context.Context, values []T, options ...QueryOption) ([]K, error) {
+	opt := &queryOption{}
+	for _, op := range options {
+		op(opt)
+	}
+
+	valTyp := reflect.TypeOf(values)
+	if valTyp != p.modelType {
+		return nil, fmt.Errorf("cannot put value. value is not a type of %s", p.modelType.Name())
+	}
+
+	fieldMap, err := p.createFieldsAndValuesMapFromModelType(values, "db")
+	if err != nil {
+		return nil, err
+	}
+
+	var columns []string
+	var insertValues []interface{}
+	for k, _ := range fieldMap {
+		columns = append(columns, k)
+		insertValues = append(insertValues, fieldMap[k])
 	}
 
 	tx, err := p.createTransaction(opt)
@@ -240,6 +287,10 @@ func (p *postgresRepository[K, T]) Upsert(ctx context.Context, id K, value T, op
 	}
 
 	return nil
+}
+
+func (p *postgresRepository[K, T]) Delete(ctx context.Context, id []K, options ...QueryOption) error {
+	return fmt.Errorf("delete operation not supported yet")
 }
 
 func (p *postgresRepository[K, T]) Begin(ctx context.Context) (Transaction, error) {

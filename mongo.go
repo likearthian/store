@@ -121,7 +121,7 @@ func (m *mongoRepository[K, T]) Select(ctx context.Context, filterMap map[string
 	return nil
 }
 
-func (m *mongoRepository[K, T]) SQLQuery(ctx context.Context, dest *[]T, sqlStr string, args []interface{}, options ...QueryOption) error {
+func (m *mongoRepository[K, T]) SQLQuery(ctx context.Context, dest any, sqlStr string, args []interface{}, options ...QueryOption) error {
 	return fmt.Errorf("the database does not support SQL Query")
 }
 
@@ -129,7 +129,7 @@ func (m *mongoRepository[K, T]) SQLExec(ctx context.Context, sqlStr string, args
 	return fmt.Errorf("the database does not support SQL Query")
 }
 
-func (m *mongoRepository[K, T]) Insert(ctx context.Context, value T, options ...QueryOption) (any, error) {
+func (m *mongoRepository[K, T]) Insert(ctx context.Context, value T, options ...QueryOption) (K, error) {
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
@@ -137,12 +137,37 @@ func (m *mongoRepository[K, T]) Insert(ctx context.Context, value T, options ...
 
 	ctx = m.setTransactionContext(ctx, opt)
 
+	var zeroKey K
 	res, err := m.collection.InsertOne(ctx, value)
+	if err != nil {
+		return zeroKey, wrapMongoError(err)
+	}
+
+	return res.InsertedID.(K), nil
+}
+
+func (m *mongoRepository[K, T]) InsertAll(ctx context.Context, values []T, options ...QueryOption) ([]K, error) {
+	opt := &queryOption{}
+	for _, op := range options {
+		op(opt)
+	}
+
+	ctx = m.setTransactionContext(ctx, opt)
+
+	insertValues := Map(values, func(val T) interface{} {
+		return val
+	})
+
+	res, err := m.collection.InsertMany(ctx, insertValues)
 	if err != nil {
 		return nil, wrapMongoError(err)
 	}
 
-	return res.InsertedID, nil
+	ids := Map(res.InsertedIDs, func(val interface{}) K {
+		return val.(K)
+	})
+
+	return ids, nil
 }
 
 func (m *mongoRepository[K, T]) Replace(ctx context.Context, id K, value T, options ...QueryOption) error {
@@ -200,6 +225,24 @@ func (m *mongoRepository[K, T]) Upsert(ctx context.Context, id K, value T, optio
 		return wrapMongoError(err)
 	}
 
+	return nil
+}
+
+func (m *mongoRepository[K, T]) Delete(ctx context.Context, id []K, options ...QueryOption) error {
+	opt := &queryOption{}
+	for _, op := range options {
+		op(opt)
+	}
+
+	ctx = m.setTransactionContext(ctx, opt)
+
+	tabledef := m.model.GetTableDef()
+	res, err := m.collection.DeleteMany(ctx, bson.D{{tabledef.KeyField, bson.M{"$in": id}}})
+	if err != nil {
+		return wrapMongoError(err)
+	}
+
+	fmt.Println("Deleted:", res.DeletedCount)
 	return nil
 }
 
@@ -349,10 +392,10 @@ type mongoTransaction struct {
 }
 
 func (tx *mongoTransaction) Rollback(ctx context.Context) error {
-	tx.session.EndSession(ctx)
+	tx.sctx.EndSession(ctx)
 	return nil
 }
 
 func (tx *mongoTransaction) Commit(ctx context.Context) error {
-	return tx.session.CommitTransaction(tx.sctx)
+	return tx.sctx.CommitTransaction(tx.sctx)
 }

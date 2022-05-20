@@ -11,20 +11,30 @@ import (
 type Repository[K comparable, T Model] interface {
 	Get(ctx context.Context, id K, dest *T, options ...QueryOption) error
 	Select(ctx context.Context, filter map[string]any, dest *[]T, options ...QueryOption) error
-	Insert(ctx context.Context, value T, options ...QueryOption) (any, error)
+	Insert(ctx context.Context, value T, options ...QueryOption) (K, error)
+	InsertAll(ctx context.Context, values []T, options ...QueryOption) ([]K, error)
 	Update(ctx context.Context, id K, keyvals map[string]any, options ...QueryOption) error
 	Upsert(ctx context.Context, id K, value T, options ...QueryOption) error
+	Delete(ctx context.Context, id []K, options ...QueryOption) error
 	//ParseRequestQueryIntoFilter(req interface{}) (interface{}, error)
-	SQLQuery(ctx context.Context, dest *[]T, sqlStr string, args []interface{}, options ...QueryOption) error
+	SQLQuery(ctx context.Context, dest any, sqlStr string, args []interface{}, options ...QueryOption) error
 	SQLExec(ctx context.Context, sqlStr string, args []interface{}, options ...QueryOption) error
 	Begin(ctx context.Context) (Transaction, error)
 }
 
+// type SQLRepository[K comparable, T Model] interface {
+// 	DB() *sqlx.DB
+// 	GetColumns() []string
+// 	FullTableName() string
+// }
+
 type repository struct {
-	Name      string
-	modelType reflect.Type
-	model     Model
-	modelTags map[string]int
+	Name        string
+	modelType   reflect.Type
+	model       Model
+	modelTags   map[string]int
+	columns     []Column
+	columnNames []string
 }
 
 func (r repository) modelTagExists(name string) bool {
@@ -32,7 +42,7 @@ func (r repository) modelTagExists(name string) bool {
 	return ok
 }
 
-func (r *repository) createFieldsAndValuesMapFromModelType(value interface{}, fieldTag string) (map[string]interface{}, error) {
+func (r *repository) createFieldsAndValuesMapFromModelType(value any, fieldTag string) (map[string]any, error) {
 	dataVal := reflect.ValueOf(value)
 	valIsMap := false
 	var valKeys []reflect.Value
@@ -137,7 +147,7 @@ func createModelTags(model reflect.Type, tag string) map[string]int {
 		}
 
 		tagName := strings.TrimSpace(tagArr[0])
-		modelTags[tagName] = i
+		modelTags[strings.ToUpper(tagName)] = i
 	}
 
 	return modelTags
