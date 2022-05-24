@@ -13,20 +13,16 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/writeconcern"
 )
 
-type mongoRepository[K comparable, T Model] struct {
+type mongoRepository[K comparable, T any] struct {
 	repository
 	db         *mongo.Database
 	collection *mongo.Collection
 }
 
-func CreateMongoRepository[K comparable, T Model](db *mongo.Database, collName string, options ...RepositoryOption) (Repository[K, T], error) {
-	opt := &option{}
+func CreateMongoRepository[K comparable, T Model](db *mongo.Database, collName string, options ...RepositoryOption[T]) (Repository[K, T], error) {
+	opt := &option[T]{}
 	for _, op := range options {
 		op(opt)
-	}
-
-	if opt.name == "" {
-		opt.name = collName
 	}
 
 	var model T
@@ -41,9 +37,8 @@ func CreateMongoRepository[K comparable, T Model](db *mongo.Database, collName s
 
 	repo := &mongoRepository[K, T]{
 		repository: repository{
-			Name:      opt.name,
+			Name:      model.GetTableDef().Name,
 			model:     model,
-			modelType: m,
 			modelTags: modelTags,
 		},
 		db:         db,
@@ -59,19 +54,9 @@ func CreateMongoRepository[K comparable, T Model](db *mongo.Database, collName s
 	return repo, nil
 }
 
-func (m *mongoRepository[K, T]) init(values any) error {
-	dataVal := reflect.ValueOf(values)
-	if dataVal.Kind() != reflect.Slice {
-		return fmt.Errorf("value to init should be a slice")
-	}
-
-	if dataVal.Type().Elem().Kind() != m.modelType.Kind() {
-		return fmt.Errorf("values to init should be []%s, got %t", m.modelType.Name(), values)
-	}
-
-	for i := 0; i < dataVal.Len(); i++ {
-		sval := dataVal.Index(i)
-		if _, err := m.Insert(context.Background(), sval.Interface().(T)); err != nil {
+func (m *mongoRepository[K, T]) init(values []T) error {
+	for _, sval := range values {
+		if _, err := m.Insert(context.Background(), sval); err != nil {
 			if !errors.Is(err, ErrKeyAlreadyExists) {
 				return err
 			}

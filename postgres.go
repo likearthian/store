@@ -15,16 +15,13 @@ type postgresRepository[K comparable, T Model] struct {
 	tableName string
 }
 
-func CreatePostgresRepository[K comparable, T Model](db *sqlx.DB, tableName string, model Model, options ...RepositoryOption) (Repository[K, T], error) {
-	opt := &option{}
+func CreatePostgresRepository[K comparable, T Model](db *sqlx.DB, tableName string, options ...RepositoryOption[T]) (Repository[K, T], error) {
+	opt := &option[T]{}
 	for _, op := range options {
 		op(opt)
 	}
 
-	if opt.name == "" {
-		opt.name = tableName
-	}
-
+	var model T
 	m := reflect.TypeOf(model)
 	if m.Kind() == reflect.Ptr {
 		m = m.Elem()
@@ -34,9 +31,8 @@ func CreatePostgresRepository[K comparable, T Model](db *sqlx.DB, tableName stri
 
 	repo := &postgresRepository[K, T]{
 		repository: repository{
-			Name:      opt.name,
+			Name:      model.GetTableDef().Name,
 			model:     model,
-			modelType: m,
 			modelTags: modelTags,
 		},
 		db:        db,
@@ -52,21 +48,7 @@ func CreatePostgresRepository[K comparable, T Model](db *sqlx.DB, tableName stri
 	return repo, nil
 }
 
-func (p *postgresRepository[K, T]) init(values any) error {
-	dataVal := reflect.ValueOf(values)
-	if dataVal.Kind() != reflect.Slice {
-		return fmt.Errorf("value to init should be a slice")
-	}
-
-	if dataVal.Elem().Type() != p.modelType {
-		return fmt.Errorf("values to init should be []%s, got %t", p.modelType.Name(), values)
-	}
-
-	for i := 0; i < dataVal.Len(); i++ {
-		_ = dataVal.Index(i)
-
-	}
-
+func (p *postgresRepository[K, T]) init(values []T) error {
 	return nil
 }
 
@@ -80,7 +62,7 @@ func (p *postgresRepository[K, T]) Get(ctx context.Context, id K, dest *T, optio
 		op(opt)
 	}
 
-	columns := strings.Join(GetColumnsFromModelType(p.modelType, "db"), ",")
+	columns := strings.Join(p.columnNames, ",")
 	var argParam []interface{}
 	tableDef := p.model.GetTableDef()
 	qry := fmt.Sprintf("SELECT %s FROM %s.%s WHERE %s = ?", columns, tableDef.Schema, tableDef.Name, tableDef.KeyField)
@@ -128,7 +110,7 @@ func (p *postgresRepository[K, T]) Select(ctx context.Context, filterMap map[str
 		defer tx.Rollback()
 	}
 
-	columns := strings.Join(GetColumnsFromModelType(p.modelType, "db"), ",")
+	columns := strings.Join(p.columnNames, ",")
 	tableDef := p.model.GetTableDef()
 	qry := fmt.Sprintf("SELECT %s FROM %s.%s %s", columns, tableDef.Schema, tableDef.Name, filter)
 	qry = tx.Rebind(qry)
@@ -155,11 +137,6 @@ func (p *postgresRepository[K, T]) Insert(ctx context.Context, value T, options 
 	}
 
 	var zeroKey K
-
-	valTyp := reflect.TypeOf(value)
-	if valTyp != p.modelType {
-		return zeroKey, fmt.Errorf("cannot put value. value is not a type of %s", p.modelType.Name())
-	}
 
 	fieldMap, err := p.createFieldsAndValuesMapFromModelType(value, "db")
 	if err != nil {
@@ -199,11 +176,6 @@ func (p *postgresRepository[K, T]) InsertAll(ctx context.Context, values []T, op
 	opt := &queryOption{}
 	for _, op := range options {
 		op(opt)
-	}
-
-	valTyp := reflect.TypeOf(values)
-	if valTyp != p.modelType {
-		return nil, fmt.Errorf("cannot put value. value is not a type of %s", p.modelType.Name())
 	}
 
 	fieldMap, err := p.createFieldsAndValuesMapFromModelType(values, "db")
@@ -281,14 +253,6 @@ func (p *postgresRepository[K, T]) Update(ctx context.Context, id K, keyvals map
 }
 
 func (p *postgresRepository[K, T]) Upsert(ctx context.Context, id K, value T, options ...QueryOption) error {
-	valTyp := reflect.TypeOf(value)
-	if valTyp.Kind() == reflect.Ptr {
-		valTyp = valTyp.Elem()
-	}
-
-	if valTyp != p.modelType {
-		return fmt.Errorf("cannot update value. value is not a type of %s", p.modelType.Name())
-	}
 
 	return nil
 }
@@ -380,4 +344,66 @@ func (p *postgresRepository[K, T]) createTransaction(opt *queryOption) (*sqlx.Tx
 	}
 
 	return p.db.Beginx()
+}
+
+func pgCreateTableDef(mval reflect.Value) (TabledDef, error) {
+	if mval.Type().Kind() == reflect.Ptr {
+		mval = mval.Elem()
+	}
+
+	if model, isModel := mval.Interface().(Model); isModel {
+		return model.GetTableDef(), nil
+	}
+
+	var tbdef TabledDef
+	schema, table, colInfos, err := ParseModel(mval.Type())
+	if err != nil {
+		return tbdef, err
+	}
+
+	var cols []Column
+	var ddlCols []string
+	var keyField string
+	for _, col := range colInfos {
+		dtype := convertTypeToOraType(col.Type)
+		if dtype == "UNKNOWN" {
+			return tbdef, fmt.Errorf("unknown datatype for Go type %s", mval.Type().Name())
+		}
+
+		cols = append(cols, Column{
+			ColumnName: col.Name,
+			DataType:   dtype,
+		})
+
+		if dtype == "VARCHAR2" && col.Size == 0 {
+			return tbdef, fmt.Errorf("VARCHAR definition requires size more than 0")
+		}
+
+		var ddlCol strings.Builder
+		ddlCol.WriteString(fmt.Sprintf("%s %s", col.Name, dtype))
+		if col.Size > 0 {
+			ddlCol.WriteString(fmt.Sprintf("(%d) ", col.Size))
+		}
+
+		if !col.AllowNull {
+			ddlCol.WriteString("NOT NULL ")
+		}
+
+		if col.IsKey {
+			keyField = col.Name
+			ddlCol.WriteString("PRIMARY KEY")
+		}
+
+		ddlCols = append(ddlCols, ddlCol.String())
+	}
+
+	createDDL := fmt.Sprintf("CREATE TABLE %s.%s (%s)", schema, table, strings.Join(ddlCols, ","))
+
+	return TabledDef{
+		Name:      table,
+		Schema:    schema,
+		KeyField:  keyField,
+		Columns:   cols,
+		CreateDDL: createDDL,
+	}, nil
 }

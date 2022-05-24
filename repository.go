@@ -62,14 +62,14 @@ func (r *repository) createFieldsAndValuesMapFromModelType(value any, fieldTag s
 		valType = valType.Elem()
 	}
 
-	if !valIsMap && r.modelType.Name() != valType.Name() {
-		return nil, fmt.Errorf("value must be of %s type or a map, got %s type", r.modelType.Name(), valType.Name())
-	}
+	// if !valIsMap && r.modelType.Name() != valType.Name() {
+	// 	return nil, fmt.Errorf("value must be of %s type or a map, got %s type", r.modelType.Name(), valType.Name())
+	// }
 
 	var result = make(map[string]interface{})
-	for i := 0; i < r.modelType.NumField(); i++ {
+	for i := 0; i < valType.NumField(); i++ {
 		var val interface{}
-		field := r.modelType.Field(i)
+		field := valType.Field(i)
 		fieldType := field.Type
 		if fieldType.Kind() == reflect.Ptr {
 			fieldType = fieldType.Elem()

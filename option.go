@@ -1,21 +1,14 @@
 package store
 
-type RepositoryOption func(o *option)
+type RepositoryOption[T any] func(o *option[T])
 
-type option struct {
-	initValues interface{}
-	name       string
+type option[T any] struct {
+	initValues []T
 }
 
-func InitWith(values interface{}) RepositoryOption {
-	return func(o *option) {
+func InitWith[T any](values []T) RepositoryOption[T] {
+	return func(o *option[T]) {
 		o.initValues = values
-	}
-}
-
-func WithName(name string) RepositoryOption {
-	return func(o *option) {
-		o.name = name
 	}
 }
 

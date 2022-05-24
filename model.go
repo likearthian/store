@@ -12,3 +12,7 @@ type SQLModelHelper interface {
 type SQLInsertGenerator interface {
 	GenerateInsertParts() (columns []string, placeholder []string, args []any)
 }
+
+type SQLTableCreator interface {
+	DDL() string
+}

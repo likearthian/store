@@ -17,8 +17,8 @@ type oracleRepository[K comparable, T any] struct {
 	db *sqlx.DB
 }
 
-func CreateOracleRepository[K comparable, T any](db *sqlx.DB, options ...RepositoryOption) (Repository[K, T], error) {
-	opt := &option{}
+func CreateOracleRepository[K comparable, T any](db *sqlx.DB, options ...RepositoryOption[T]) (Repository[K, T], error) {
+	opt := &option[T]{}
 	for _, op := range options {
 		op(opt)
 	}
@@ -34,10 +34,6 @@ func CreateOracleRepository[K comparable, T any](db *sqlx.DB, options ...Reposit
 	tb, err := oraCreateTableDef(mval)
 	if err != nil {
 		return nil, err
-	}
-
-	if opt.name == "" {
-		opt.name = tb.Name
 	}
 
 	cols, err := oraGetColumns(db, tb.Schema, tb.Name)
@@ -76,25 +72,11 @@ func CreateOracleRepository[K comparable, T any](db *sqlx.DB, options ...Reposit
 }
 
 func (p *oracleRepository[K, T]) Init(values []T) error {
-	dataVal := reflect.ValueOf(values)
-	if dataVal.Kind() != reflect.Slice {
-		return fmt.Errorf("value to init should be a slice")
-	}
-
-	if dataVal.Elem().Type() != p.modelType {
-		return fmt.Errorf("values to init should be []%s, got %t", p.modelType.Name(), values)
-	}
-
-	for i := 0; i < dataVal.Len(); i++ {
-		_ = dataVal.Index(i)
-
-	}
-
 	return nil
 }
 
 func (p *oracleRepository[K, T]) GetTableDef() TabledDef {
-	return p.model.GetTableDef()
+	return p.tableDef
 }
 
 func (p *oracleRepository[K, T]) Get(ctx context.Context, id K, dest *T, options ...QueryOption) error {
@@ -212,7 +194,7 @@ func (p *oracleRepository[K, T]) Insert(ctx context.Context, value T, options ..
 		return zeroKey, err
 	}
 
-	var columns []string
+	var columns []string = p.columnNames
 	var values []interface{}
 	for k, _ := range fieldMap {
 		columns = append(columns, k)
@@ -507,7 +489,7 @@ func oraCreateTableDef(mval reflect.Value) (TabledDef, error) {
 	var tbdef TabledDef
 	schema, table, colInfos, err := ParseModel(mval.Type())
 	if err != nil {
-		return nil, err
+		return tbdef, err
 	}
 
 	var cols []Column
@@ -516,7 +498,7 @@ func oraCreateTableDef(mval reflect.Value) (TabledDef, error) {
 	for _, col := range colInfos {
 		dtype := convertTypeToOraType(col.Type)
 		if dtype == "UNKNOWN" {
-			return tbdef, fmt.Errorf("unknown datatype for Go type %s", mval.Type().Name())
+			return tbdef, fmt.Errorf("unknown datatype for Go type %s", col.Type.Name())
 		}
 
 		cols = append(cols, Column{
@@ -531,16 +513,23 @@ func oraCreateTableDef(mval reflect.Value) (TabledDef, error) {
 		var ddlCol strings.Builder
 		ddlCol.WriteString(fmt.Sprintf("%s %s", col.Name, dtype))
 		if col.Size > 0 {
-			ddlCol.WriteString(fmt.Sprintf("(%d) ", col.Size))
+			ddlCol.WriteString(fmt.Sprintf("(%d)", col.Size))
 		}
 
 		if !col.AllowNull {
-			ddlCol.WriteString("NOT NULL ")
+			xAllowNull := false
+			if dtype == "VARCHAR2" && col.Type.Name() == "NullString" {
+				xAllowNull = true
+			}
+
+			if !xAllowNull {
+				ddlCol.WriteString(" NOT NULL")
+			}
 		}
 
 		if col.IsKey {
 			keyField = col.Name
-			ddlCol.WriteString("PRIMARY KEY")
+			ddlCol.WriteString(" PRIMARY KEY")
 		}
 
 		ddlCols = append(ddlCols, ddlCol.String())
@@ -570,6 +559,8 @@ func convertTypeToOraType(model reflect.Type) string {
 		switch model.Name() {
 		case "Time":
 			return "TIMESTAMP"
+		case "NullString":
+			return "VARCHAR2"
 		default:
 			return "UNKNOWN"
 		}

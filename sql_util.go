@@ -9,14 +9,6 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-type DBTable struct {
-}
-
-type Column struct {
-	ColumnName string `db:"column_name"`
-	DataType   string `db:"data_type"`
-}
-
 type sqlTransaction struct {
 	Tx *sqlx.Tx
 }
