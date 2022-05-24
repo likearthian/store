@@ -9,3 +9,6 @@ type SQLModelHelper interface {
 	GetInsertPlaceholders() []string
 	GetInsertArgs() []any
 }
+type SQLInsertGenerator interface {
+	GenerateInsertParts() (columns []string, placeholder []string, args []any)
+}

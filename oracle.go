@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -87,6 +88,10 @@ func (p *oracleRepository[K, T]) Init(values []T) error {
 	}
 
 	return nil
+}
+
+func (p *oracleRepository[K, T]) GetTableDef() TabledDef {
+	return p.model.GetTableDef()
 }
 
 func (p *oracleRepository[K, T]) Get(ctx context.Context, id K, dest *T, options ...QueryOption) error {
@@ -222,15 +227,30 @@ func (p *oracleRepository[K, T]) Insert(ctx context.Context, value T, options ..
 
 	tb := p.model.GetTableDef()
 	var args []any
+	mtype := "plain"
 	valval := reflect.ValueOf(value)
 	smodel, ok := valval.Interface().(SQLModelHelper)
-	var valph string
 	if ok {
+		mtype = "smodel"
+	}
+
+	sgen, ok := valval.Interface().(SQLInsertGenerator)
+	if ok {
+		mtype = "sgen"
+	}
+
+	var valph string
+	switch mtype {
+	case "smodel":
 		columns = smodel.GetInsertColumnNames()
 		args = smodel.GetInsertArgs()
 		ph := smodel.GetInsertPlaceholders()
 		valph = strings.Join(ph, ",")
-	} else {
+	case "sgen":
+		var ph []string
+		columns, ph, args = sgen.GenerateInsertParts()
+		valph = strings.Join(ph, ",")
+	default:
 		valph, args, _ = sqlx.In("?", values)
 	}
 
@@ -486,6 +506,41 @@ func oraGetColumns(db *sqlx.DB, schema, table string) ([]Column, error) {
 	return cols, nil
 }
 
+func oraGetKeyColumnName(db *sqlx.DB, schema, table string) (string, error) {
+	qry := `
+		select
+			b.COLUMN_NAME
+		from
+			all_constraints a
+			inner join
+			all_cons_columns b
+			on
+				a.constraint_name = b.constraint_name
+		where
+			a.owner = ?
+			and a.table_name = ?
+			and a.constraint_type = 'P';
+	`
+
+	type ColName struct {
+		Name string `db:"COLUMN_NAME"`
+	}
+
+	qry = db.Rebind(qry)
+	var cols []ColName
+	if err := db.Select(&cols, qry, strings.ToUpper(schema), strings.ToUpper(table)); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return "", err
+		}
+	}
+
+	if len(cols) > 1 {
+		return "", fmt.Errorf("store doesn't support multiple key field")
+	}
+
+	return cols[0].Name, nil
+}
+
 func (p *oracleRepository[K, T]) createTransaction(opt *queryOption) (*sqlx.Tx, error) {
 	if opt.Tx != nil {
 		if tx, ok := opt.Tx.(*sqlTransaction); ok {
@@ -520,9 +575,18 @@ func (p *oracleRepository[K, T]) createMultiInsertQuery(values []T) (strSql stri
 	}
 
 	insertColumnNames := p.columnNames
+	mtype := "plain"
+
 	smodel, isSmodel := p.model.(SQLModelHelper)
 	if isSmodel {
 		insertColumnNames = smodel.GetInsertColumnNames()
+		mtype = "smodel"
+	}
+
+	sgen, isSgen := p.model.(SQLInsertGenerator)
+	if isSgen {
+		insertColumnNames, _, _ = sgen.GenerateInsertParts()
+		mtype = "sgen"
 	}
 
 	var insertFields []Column
@@ -535,26 +599,32 @@ func (p *oracleRepository[K, T]) createMultiInsertQuery(values []T) (strSql stri
 
 	var insertRows = make([][]any, len(insertColumnNames))
 	for i, val := range values {
-		if isSmodel {
+		switch mtype {
+		case "smodel":
 			smodel = reflect.ValueOf(val).Interface().(SQLModelHelper)
 			sval := smodel.GetInsertArgs()
 			for iv := range sval {
 				insertRows[iv] = append(insertRows[iv], sval[iv])
 			}
-			continue
-		}
-
-		fm := fieldMaps[i]
-		var row = make([]any, len(insertColumnNames))
-		for cx, c := range insertColumnNames {
-			cname := strings.ToUpper(c)
-			if cval, ok := fm[cname]; ok {
-				row[cx] = cval
+		case "sgen":
+			sgen = reflect.ValueOf(val).Interface().(SQLInsertGenerator)
+			_, _, sval := sgen.GenerateInsertParts()
+			for iv := range sval {
+				insertRows[iv] = append(insertRows[iv], sval[iv])
 			}
-		}
+		default:
+			fm := fieldMaps[i]
+			var row = make([]any, len(insertColumnNames))
+			for cx, c := range insertColumnNames {
+				cname := strings.ToUpper(c)
+				if cval, ok := fm[cname]; ok {
+					row[cx] = cval
+				}
+			}
 
-		for iv := range row {
-			insertRows[iv] = append(insertRows[iv], row[iv])
+			for iv := range row {
+				insertRows[iv] = append(insertRows[iv], row[iv])
+			}
 		}
 	}
 
@@ -565,6 +635,35 @@ func (p *oracleRepository[K, T]) createMultiInsertQuery(values []T) (strSql stri
 
 	return
 }
+
+// func createOraInsertQuery(schema, tablename string, value any) (qry string, args []any, err error) {
+// 	vtype := "struct"
+// 	var cols []string
+// 	var placeholders []string
+// 	var vVal reflect.Value
+
+// 	sqlInserter, isSQLInserter := value.(SQLInserter)
+// 	if isSQLInserter {
+// 		vtype = "SQLInserter"
+// 	} else {
+// 		vVal = reflect.ValueOf(value)
+// 		switch vVal.Type().Kind() {
+// 		case reflect.Struct:
+// 			vtype = "struct"
+// 		case reflect.Map:
+// 			vtype = "map"
+// 		default:
+// 			return qry, args, fmt.Errorf("value of type %T is not supported", value)
+// 		}
+// 	}
+
+// 	switch vtype {
+// 	case "SQLInserter":
+// 		cols, placeholders, args = sqlInserter.GenerateInsertParts()
+// 	case "struct":
+
+// 	}
+// }
 
 func makeOraValueSlice(insertFields []Column, insertValues [][]any) (argValues []any) {
 	argValues = make([]any, len(insertValues))

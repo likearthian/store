@@ -81,6 +81,10 @@ func (m *mongoRepository[K, T]) init(values any) error {
 	return nil
 }
 
+func (m *mongoRepository[K, T]) GetTableDef() TabledDef {
+	return m.model.GetTableDef()
+}
+
 func (m *mongoRepository[K, T]) Get(ctx context.Context, id K, dest *T, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {

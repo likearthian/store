@@ -20,13 +20,8 @@ type Repository[K comparable, T Model] interface {
 	SQLQuery(ctx context.Context, dest any, sqlStr string, args []interface{}, options ...QueryOption) error
 	SQLExec(ctx context.Context, sqlStr string, args []interface{}, options ...QueryOption) error
 	Begin(ctx context.Context) (Transaction, error)
+	GetTableDef() TabledDef
 }
-
-// type SQLRepository[K comparable, T Model] interface {
-// 	DB() *sqlx.DB
-// 	GetColumns() []string
-// 	FullTableName() string
-// }
 
 type repository struct {
 	Name        string

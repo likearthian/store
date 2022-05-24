@@ -70,6 +70,10 @@ func (p *postgresRepository[K, T]) init(values any) error {
 	return nil
 }
 
+func (p *postgresRepository[K, T]) GetTableDef() TabledDef {
+	return p.model.GetTableDef()
+}
+
 func (p *postgresRepository[K, T]) Get(ctx context.Context, id K, dest *T, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
