@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-type Repository[K comparable, T Model] interface {
+type Repository[K comparable, T any] interface {
 	Get(ctx context.Context, id K, dest *T, options ...QueryOption) error
 	Select(ctx context.Context, filter map[string]any, dest *[]T, options ...QueryOption) error
 	Insert(ctx context.Context, value T, options ...QueryOption) (K, error)
@@ -25,7 +25,8 @@ type Repository[K comparable, T Model] interface {
 
 type repository struct {
 	Name        string
-	modelType   reflect.Type
+	Schema      string
+	tableDef    TabledDef
 	model       Model
 	modelTags   map[string]int
 	columns     []Column
@@ -77,7 +78,7 @@ func (r *repository) createFieldsAndValuesMapFromModelType(value any, fieldTag s
 		col := ""
 		tagValue, ok := field.Tag.Lookup(fieldTag)
 		if ok {
-			name, _, _ := ParseDBTag(tagValue)
+			name, _, _, _, _ := ParseDBTag(tagValue)
 			col = name
 		}
 

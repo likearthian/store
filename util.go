@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"reflect"
+	"strconv"
 	"strings"
 )
 
@@ -73,18 +74,62 @@ func GetColumnsFromModelType(model reflect.Type, tag string) []string {
 	return columns
 }
 
-func ParseDBTag(value string) (name string, datatype string, option string) {
-	valArr := strings.Split(value, ",")
-	name = strings.TrimSpace(valArr[0])
-	datatype = ""
-	option = ""
-
-	if len(valArr) > 1 {
-		datatype = valArr[1]
+func ParseDBTag(value string) (name string, size int, isAuto bool, isKey bool, allowNull bool) {
+	tagArr := strings.Split(value, ",")
+	if len(tagArr) == 0 {
+		return
 	}
 
-	if len(valArr) > 2 {
-		option = valArr[2]
+	checkBool := func(key string, tagarr []string) bool {
+		bval := false
+		skey := strings.TrimSpace(tagarr[0])
+		if strings.EqualFold(skey, key) {
+			bval = true
+		}
+
+		if len(tagarr) > 1 {
+			sval := strings.TrimSpace(tagarr[1])
+			if strings.EqualFold(sval, "true") {
+				bval = true
+			}
+
+			if strings.EqualFold(sval, "false") {
+				bval = false
+			}
+		}
+
+		return bval
+	}
+
+	name = strings.TrimSpace(tagArr[0])
+	if len(tagArr) > 1 {
+		det := strings.Split(tagArr[1], " ")
+		for _, v := range det {
+			varr := strings.Split(v, "=")
+			key := strings.TrimSpace(varr[0])
+
+			if checkBool("auto", varr) {
+				isAuto = true
+				continue
+			}
+
+			if checkBool("key", varr) {
+				isKey = true
+				allowNull = false
+				continue
+			}
+
+			if checkBool("allownull", varr) {
+				allowNull = true && !isKey
+				continue
+			}
+
+			if len(varr) > 1 {
+				if strings.EqualFold(key, "size") {
+					size, _ = strconv.Atoi(varr[1])
+				}
+			}
+		}
 	}
 
 	return

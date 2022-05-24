@@ -12,26 +12,29 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-type oracleRepository[K comparable, T Model] struct {
+type oracleRepository[K comparable, T any] struct {
 	repository
 	db *sqlx.DB
 }
 
-func CreateOracleRepository[K comparable, T Model](db *sqlx.DB, options ...RepositoryOption) (Repository[K, T], error) {
+func CreateOracleRepository[K comparable, T any](db *sqlx.DB, options ...RepositoryOption) (Repository[K, T], error) {
 	opt := &option{}
 	for _, op := range options {
 		op(opt)
 	}
 
-	var model T
+	var entity T
 
-	m := reflect.TypeOf(model)
-	if m.Kind() == reflect.Ptr {
-		m = m.Elem()
+	mval := reflect.ValueOf(entity)
+	if mval.Type().Kind() == reflect.Ptr {
+		mval = mval.Elem()
 	}
 
-	modelTags := createModelTags(m, "db")
-	tb := model.GetTableDef()
+	modelTags := createModelTags(mval.Type(), "db")
+	tb, err := oraCreateTableDef(mval)
+	if err != nil {
+		return nil, err
+	}
 
 	if opt.name == "" {
 		opt.name = tb.Name
@@ -53,9 +56,9 @@ func CreateOracleRepository[K comparable, T Model](db *sqlx.DB, options ...Repos
 
 	repo := &oracleRepository[K, T]{
 		repository: repository{
-			Name:        opt.name,
-			model:       model,
-			modelType:   m,
+			Name:        tb.Name,
+			Schema:      tb.Schema,
+			tableDef:    tb,
 			modelTags:   modelTags,
 			columns:     cols,
 			columnNames: colNames,
@@ -490,6 +493,89 @@ func (p *oracleRepository[K, T]) parameterizedFilterCriteriaSlice(fieldname stri
 	}
 
 	return where, value, nil
+}
+
+func oraCreateTableDef(mval reflect.Value) (TabledDef, error) {
+	if mval.Type().Kind() == reflect.Ptr {
+		mval = mval.Elem()
+	}
+
+	if model, isModel := mval.Interface().(Model); isModel {
+		return model.GetTableDef(), nil
+	}
+
+	var tbdef TabledDef
+	schema, table, colInfos, err := ParseModel(mval.Type())
+	if err != nil {
+		return nil, err
+	}
+
+	var cols []Column
+	var ddlCols []string
+	var keyField string
+	for _, col := range colInfos {
+		dtype := convertTypeToOraType(col.Type)
+		if dtype == "UNKNOWN" {
+			return tbdef, fmt.Errorf("unknown datatype for Go type %s", mval.Type().Name())
+		}
+
+		cols = append(cols, Column{
+			ColumnName: col.Name,
+			DataType:   dtype,
+		})
+
+		if dtype == "VARCHAR2" && col.Size == 0 {
+			return tbdef, fmt.Errorf("VARCHAR definition requires size more than 0")
+		}
+
+		var ddlCol strings.Builder
+		ddlCol.WriteString(fmt.Sprintf("%s %s", col.Name, dtype))
+		if col.Size > 0 {
+			ddlCol.WriteString(fmt.Sprintf("(%d) ", col.Size))
+		}
+
+		if !col.AllowNull {
+			ddlCol.WriteString("NOT NULL ")
+		}
+
+		if col.IsKey {
+			keyField = col.Name
+			ddlCol.WriteString("PRIMARY KEY")
+		}
+
+		ddlCols = append(ddlCols, ddlCol.String())
+	}
+
+	createDDL := fmt.Sprintf("CREATE TABLE %s.%s (%s)", schema, table, strings.Join(ddlCols, ","))
+
+	return TabledDef{
+		Name:      table,
+		Schema:    schema,
+		KeyField:  keyField,
+		Columns:   cols,
+		CreateDDL: createDDL,
+	}, nil
+}
+
+func convertTypeToOraType(model reflect.Type) string {
+	kind := model.Kind()
+	switch kind {
+	case reflect.String:
+		return "VARCHAR2"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return "NUMBER"
+	case reflect.Struct:
+		switch model.Name() {
+		case "Time":
+			return "TIMESTAMP"
+		default:
+			return "UNKNOWN"
+		}
+	default:
+		return "UNKNOWN"
+	}
 }
 
 func oraGetColumns(db *sqlx.DB, schema, table string) ([]Column, error) {

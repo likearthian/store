@@ -12,6 +12,7 @@ require github.com/google/go-cmp v0.5.6 // indirect
 require (
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/golang/snappy v0.0.1 // indirect
+	github.com/iancoleman/strcase v0.2.0
 	github.com/klauspost/compress v1.13.6 // indirect
 	github.com/lib/pq v1.10.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
