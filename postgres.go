@@ -257,6 +257,11 @@ func (p *postgresRepository[K, T]) Upsert(ctx context.Context, id K, value T, op
 	return nil
 }
 
+func (p *postgresRepository[K, T]) UpsertAll(ctx context.Context, values []T, options ...QueryOption) error {
+
+	return nil
+}
+
 func (p *postgresRepository[K, T]) Delete(ctx context.Context, id []K, options ...QueryOption) error {
 	return fmt.Errorf("delete operation not supported yet")
 }

@@ -15,6 +15,7 @@ type Repository[K comparable, T any] interface {
 	InsertAll(ctx context.Context, values []T, options ...QueryOption) ([]K, error)
 	Update(ctx context.Context, id K, keyvals map[string]any, options ...QueryOption) error
 	Upsert(ctx context.Context, id K, value T, options ...QueryOption) error
+	// UpsertAll(ctx context.Context, values []T, options ...QueryOption) error
 	Delete(ctx context.Context, id []K, options ...QueryOption) error
 	//ParseRequestQueryIntoFilter(req interface{}) (interface{}, error)
 	SQLQuery(ctx context.Context, dest any, sqlStr string, args []interface{}, options ...QueryOption) error
@@ -147,4 +148,37 @@ func createModelTags(model reflect.Type, tag string) map[string]int {
 	}
 
 	return modelTags
+}
+
+func CreateFieldsAndValuesMap[T any](value T, modelTags map[string]int) (map[string]any, error) {
+	dataVal := reflect.ValueOf(value)
+
+	valType := dataVal.Type()
+	var result = make(map[string]interface{})
+	for k, i := range modelTags {
+		field := valType.Field(i)
+		name, _, isAuto, _, _ := ParseDBTag(field.Tag.Get("db"))
+		if name == "" || isAuto {
+			continue
+		}
+
+		val := dataVal.Field(i).Interface()
+		if v, ok := val.(driver.Valuer); ok {
+			buffVal, err := v.Value()
+			if err != nil {
+				return nil, err
+			}
+
+			//skip for nil value
+			if buffVal == nil {
+				continue
+			}
+
+			val = buffVal
+		}
+
+		result[k] = val
+	}
+
+	return result, nil
 }

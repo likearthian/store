@@ -196,7 +196,7 @@ func (p *oracleRepository[K, T]) Insert(ctx context.Context, value T, options ..
 
 	var columns []string = p.columnNames
 	var values []interface{}
-	for k, _ := range fieldMap {
+	for k := range fieldMap {
 		columns = append(columns, k)
 		values = append(values, fieldMap[k])
 	}
@@ -355,6 +355,60 @@ func (p *oracleRepository[K, T]) Upsert(ctx context.Context, id K, value T, opti
 	if opt.Tx == nil {
 		return tx.Commit()
 	}
+
+	return nil
+}
+
+func (p *oracleRepository[K, T]) UpsertAll(ctx context.Context, values []T, options ...QueryOption) error {
+	opt := &queryOption{}
+	for _, op := range options {
+		op(opt)
+	}
+
+	tx, err := p.createTransaction(opt)
+	if err != nil {
+		return err
+	}
+
+	if opt.Tx == nil {
+		defer tx.Rollback()
+	}
+
+	var keys []K
+	keyField := p.tableDef.KeyField
+	var keyVals []map[string]any
+	for _, val := range values {
+		keyval, err := CreateFieldsAndValuesMap(val, p.modelTags)
+		if err != nil {
+			return err
+		}
+
+		keyVals = append(keyVals, keyval)
+		if key, ok := keyval[keyField]; ok {
+			keys = append(keys, key.(K))
+		}
+	}
+
+	var existing []T
+	if err := p.Select(ctx, map[string]any{keyField: keys}, &existing, WithTransaction(opt.Tx)); err != nil {
+		if !errors.Is(err, ErrKeynotFound) {
+			return err
+		}
+	}
+
+	// if existing {
+	// 	if err := p.Delete(ctx, []K{id}, WithTransaction(opt.Tx)); err != nil {
+	// 		return err
+	// 	}
+	// }
+
+	// if _, err := p.Insert(ctx, value, WithTransaction(opt.Tx)); err != nil {
+	// 	return err
+	// }
+
+	// if opt.Tx == nil {
+	// 	return tx.Commit()
+	// }
 
 	return nil
 }

@@ -15,6 +15,16 @@ type TabledDef struct {
 	CreateDDL string
 }
 
+func (td TabledDef) ColumnNames() []string {
+	return Map(td.Columns, func(val Column) string {
+		return val.ColumnName
+	})
+}
+
+func (td TabledDef) FullTableName() string {
+	return fmt.Sprintf("%s.%s", td.Schema, td.Name)
+}
+
 type DBTable struct {
 }
 

@@ -217,6 +217,24 @@ func (m *mongoRepository[K, T]) Upsert(ctx context.Context, id K, value T, optio
 	return nil
 }
 
+func (m *mongoRepository[K, T]) UpsertAll(ctx context.Context, values []T, options ...QueryOption) error {
+	// opt := &queryOption{}
+	// for _, op := range options {
+	// 	op(opt)
+	// }
+
+	// ctx = m.setTransactionContext(ctx, opt)
+
+	// tabledef := m.model.GetTableDef()
+	// m.collection.BulkWrite()
+	// _, err := m.collection.ReplaceOne(ctx, bson.D{{Key: tabledef.KeyField, Value: id}}, value, mongoOptions.Replace().SetUpsert(true))
+	// if err != nil {
+	// 	return wrapMongoError(err)
+	// }
+
+	return nil
+}
+
 func (m *mongoRepository[K, T]) Delete(ctx context.Context, id []K, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
