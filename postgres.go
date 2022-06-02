@@ -32,8 +32,9 @@ func CreatePostgresRepository[K comparable, T Model](db *sqlx.DB, tableName stri
 	repo := &postgresRepository[K, T]{
 		repository: repository{
 			Name:      model.GetTableDef().Name,
-			model:     model,
 			modelTags: modelTags,
+			tableDef:  model.GetTableDef(),
+			modelType: m,
 		},
 		db:        db,
 		tableName: tableName,
@@ -53,7 +54,7 @@ func (p *postgresRepository[K, T]) init(values []T) error {
 }
 
 func (p *postgresRepository[K, T]) GetTableDef() TabledDef {
-	return p.model.GetTableDef()
+	return p.tableDef
 }
 
 func (p *postgresRepository[K, T]) Get(ctx context.Context, id K, dest *T, options ...QueryOption) error {
@@ -64,7 +65,7 @@ func (p *postgresRepository[K, T]) Get(ctx context.Context, id K, dest *T, optio
 
 	columns := strings.Join(p.columnNames, ",")
 	var argParam []interface{}
-	tableDef := p.model.GetTableDef()
+	tableDef := p.tableDef
 	qry := fmt.Sprintf("SELECT %s FROM %s.%s WHERE %s = ?", columns, tableDef.Schema, tableDef.Name, tableDef.KeyField)
 	argParam = append(argParam, id)
 
@@ -111,7 +112,7 @@ func (p *postgresRepository[K, T]) Select(ctx context.Context, filterMap map[str
 	}
 
 	columns := strings.Join(p.columnNames, ",")
-	tableDef := p.model.GetTableDef()
+	tableDef := p.tableDef
 	qry := fmt.Sprintf("SELECT %s FROM %s.%s %s", columns, tableDef.Schema, tableDef.Name, filter)
 	qry = tx.Rebind(qry)
 
@@ -159,7 +160,7 @@ func (p *postgresRepository[K, T]) Insert(ctx context.Context, value T, options 
 		defer tx.Rollback()
 	}
 
-	tabledef := p.model.GetTableDef()
+	tabledef := p.tableDef
 	qry := fmt.Sprintf("INSERT INTO %s.%s VALUES (?)", tabledef.Schema, tabledef.Name)
 	qry, args, err := sqlx.In(qry, values)
 	qry = tx.Rebind(qry)
@@ -199,7 +200,7 @@ func (p *postgresRepository[K, T]) InsertAll(ctx context.Context, values []T, op
 		defer tx.Rollback()
 	}
 
-	tabledef := p.model.GetTableDef()
+	tabledef := p.tableDef
 	qry := fmt.Sprintf("INSERT INTO %s.%s VALUES (?)", tabledef.Schema, tabledef.Name)
 	qry, args, err := sqlx.In(qry, values)
 	qry = tx.Rebind(qry)
@@ -238,7 +239,7 @@ func (p *postgresRepository[K, T]) Update(ctx context.Context, id K, keyvals map
 		defer tx.Rollback()
 	}
 
-	tabledef := p.model.GetTableDef()
+	tabledef := p.tableDef
 	qry := fmt.Sprintf("INSERT INTO %s.%s VALUES (?)", tabledef.Schema, tabledef.Name)
 
 	qry, args, err := sqlx.In(qry, values)

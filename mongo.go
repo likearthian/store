@@ -38,8 +38,9 @@ func CreateMongoRepository[K comparable, T Model](db *mongo.Database, collName s
 	repo := &mongoRepository[K, T]{
 		repository: repository{
 			Name:      model.GetTableDef().Name,
-			model:     model,
 			modelTags: modelTags,
+			tableDef:  model.GetTableDef(),
+			modelType: m,
 		},
 		db:         db,
 		collection: collection,
@@ -67,7 +68,7 @@ func (m *mongoRepository[K, T]) init(values []T) error {
 }
 
 func (m *mongoRepository[K, T]) GetTableDef() TabledDef {
-	return m.model.GetTableDef()
+	return m.tableDef
 }
 
 func (m *mongoRepository[K, T]) Get(ctx context.Context, id K, dest *T, options ...QueryOption) error {
@@ -77,7 +78,7 @@ func (m *mongoRepository[K, T]) Get(ctx context.Context, id K, dest *T, options 
 	}
 
 	ctx = m.setTransactionContext(ctx, opt)
-	tabledef := m.model.GetTableDef()
+	tabledef := m.tableDef
 	filter := bson.D{{Key: tabledef.KeyField, Value: id}}
 	err := m.collection.FindOne(ctx, filter).Decode(dest)
 	if err != nil {
@@ -167,7 +168,7 @@ func (m *mongoRepository[K, T]) Replace(ctx context.Context, id K, value T, opti
 
 	ctx = m.setTransactionContext(ctx, opt)
 
-	tabledef := m.model.GetTableDef()
+	tabledef := m.tableDef
 	up, err := m.collection.ReplaceOne(ctx, bson.D{{Key: tabledef.KeyField, Value: id}}, value)
 	if err != nil {
 		return wrapMongoError(err)
@@ -208,7 +209,7 @@ func (m *mongoRepository[K, T]) Upsert(ctx context.Context, id K, value T, optio
 
 	ctx = m.setTransactionContext(ctx, opt)
 
-	tabledef := m.model.GetTableDef()
+	tabledef := m.tableDef
 	_, err := m.collection.ReplaceOne(ctx, bson.D{{Key: tabledef.KeyField, Value: id}}, value, mongoOptions.Replace().SetUpsert(true))
 	if err != nil {
 		return wrapMongoError(err)
@@ -243,7 +244,7 @@ func (m *mongoRepository[K, T]) Delete(ctx context.Context, id []K, options ...Q
 
 	ctx = m.setTransactionContext(ctx, opt)
 
-	tabledef := m.model.GetTableDef()
+	tabledef := m.tableDef
 	res, err := m.collection.DeleteMany(ctx, bson.D{{tabledef.KeyField, bson.M{"$in": id}}})
 	if err != nil {
 		return wrapMongoError(err)

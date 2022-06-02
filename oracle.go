@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -55,6 +54,7 @@ func CreateOracleRepository[K comparable, T any](db *sqlx.DB, options ...Reposit
 			Name:        tb.Name,
 			Schema:      tb.Schema,
 			tableDef:    tb,
+			modelType:   mval.Type(),
 			modelTags:   modelTags,
 			columns:     cols,
 			columnNames: colNames,
@@ -87,7 +87,7 @@ func (p *oracleRepository[K, T]) Get(ctx context.Context, id K, dest *T, options
 
 	columns := strings.Join(p.columnNames, ",")
 	var argParam []interface{}
-	tableDef := p.model.GetTableDef()
+	tableDef := p.tableDef
 	qry := fmt.Sprintf("SELECT %s FROM %s.%s WHERE %s = ?", columns, tableDef.Schema, tableDef.Name, tableDef.KeyField)
 	argParam = append(argParam, id)
 
@@ -139,7 +139,7 @@ func (p *oracleRepository[K, T]) Select(ctx context.Context, filterMap map[strin
 	}
 
 	columns := strings.Join(p.columnNames, ",")
-	tableDef := p.model.GetTableDef()
+	tableDef := p.tableDef
 	qry := fmt.Sprintf("SELECT %s FROM %s.%s %s", columns, tableDef.Schema, tableDef.Name, filter)
 	qry = tx.Rebind(qry)
 
@@ -210,14 +210,14 @@ func (p *oracleRepository[K, T]) Insert(ctx context.Context, value T, options ..
 		defer tx.Rollback()
 	}
 
-	tb := p.model.GetTableDef()
+	tb := p.tableDef
 	var args []any
 	mtype := "plain"
 	valval := reflect.ValueOf(value)
-	smodel, ok := valval.Interface().(SQLModelHelper)
-	if ok {
-		mtype = "smodel"
-	}
+	// smodel, ok := valval.Interface().(SQLModelHelper)
+	// if ok {
+	// 	mtype = "smodel"
+	// }
 
 	sgen, ok := valval.Interface().(SQLInsertGenerator)
 	if ok {
@@ -226,11 +226,11 @@ func (p *oracleRepository[K, T]) Insert(ctx context.Context, value T, options ..
 
 	var valph string
 	switch mtype {
-	case "smodel":
-		columns = smodel.GetInsertColumnNames()
-		args = smodel.GetInsertArgs()
-		ph := smodel.GetInsertPlaceholders()
-		valph = strings.Join(ph, ",")
+	// case "smodel":
+	// 	columns = smodel.GetInsertColumnNames()
+	// 	args = smodel.GetInsertArgs()
+	// 	ph := smodel.GetInsertPlaceholders()
+	// 	valph = strings.Join(ph, ",")
 	case "sgen":
 		var ph []string
 		columns, ph, args = sgen.GenerateInsertParts()
@@ -359,60 +359,6 @@ func (p *oracleRepository[K, T]) Upsert(ctx context.Context, id K, value T, opti
 	return nil
 }
 
-func (p *oracleRepository[K, T]) UpsertAll(ctx context.Context, values []T, options ...QueryOption) error {
-	opt := &queryOption{}
-	for _, op := range options {
-		op(opt)
-	}
-
-	tx, err := p.createTransaction(opt)
-	if err != nil {
-		return err
-	}
-
-	if opt.Tx == nil {
-		defer tx.Rollback()
-	}
-
-	var keys []K
-	keyField := p.tableDef.KeyField
-	var keyVals []map[string]any
-	for _, val := range values {
-		keyval, err := CreateFieldsAndValuesMap(val, p.modelTags)
-		if err != nil {
-			return err
-		}
-
-		keyVals = append(keyVals, keyval)
-		if key, ok := keyval[keyField]; ok {
-			keys = append(keys, key.(K))
-		}
-	}
-
-	var existing []T
-	if err := p.Select(ctx, map[string]any{keyField: keys}, &existing, WithTransaction(opt.Tx)); err != nil {
-		if !errors.Is(err, ErrKeynotFound) {
-			return err
-		}
-	}
-
-	// if existing {
-	// 	if err := p.Delete(ctx, []K{id}, WithTransaction(opt.Tx)); err != nil {
-	// 		return err
-	// 	}
-	// }
-
-	// if _, err := p.Insert(ctx, value, WithTransaction(opt.Tx)); err != nil {
-	// 	return err
-	// }
-
-	// if opt.Tx == nil {
-	// 	return tx.Commit()
-	// }
-
-	return nil
-}
-
 func (p *oracleRepository[K, T]) Delete(ctx context.Context, id []K, options ...QueryOption) error {
 	opt := &queryOption{}
 	for _, op := range options {
@@ -428,7 +374,7 @@ func (p *oracleRepository[K, T]) Delete(ctx context.Context, id []K, options ...
 		defer tx.Rollback()
 	}
 
-	tb := p.model.GetTableDef()
+	tb := p.tableDef
 	qry := fmt.Sprintf("DELETE FROM %s.%s WHERE %s in (?)", tb.Schema, tb.Name, tb.KeyField)
 	var args []any
 	qry, args, err = sqlx.In(qry, id)
@@ -458,7 +404,7 @@ func (p *oracleRepository[K, T]) Begin(ctx context.Context) (Transaction, error)
 }
 
 func (p *oracleRepository[K, T]) createUpdateQuery(id K, keyvals map[string]interface{}) (qry string, args []any) {
-	tb := p.model.GetTableDef()
+	tb := p.tableDef
 	var sets []string
 	for k, v := range keyvals {
 		sets = append(sets, fmt.Sprintf("%s = ?", k))
@@ -600,6 +546,77 @@ func oraCreateTableDef(mval reflect.Value) (TabledDef, error) {
 	}, nil
 }
 
+func CreateOracleTableDef[T any]() (TabledDef, error) {
+	var obj T
+	mval := reflect.ValueOf(obj)
+	if mval.Type().Kind() == reflect.Ptr {
+		mval = mval.Elem()
+	}
+
+	if model, isModel := mval.Interface().(Model); isModel {
+		return model.GetTableDef(), nil
+	}
+
+	var tbdef TabledDef
+	schema, table, colInfos, err := ParseModel(mval.Type())
+	if err != nil {
+		return tbdef, err
+	}
+
+	var cols []Column
+	var ddlCols []string
+	var keyField string
+	for _, col := range colInfos {
+		dtype := convertTypeToOraType(col.Type)
+		if dtype == "UNKNOWN" {
+			return tbdef, fmt.Errorf("unknown datatype for Go type %s", col.Type.Name())
+		}
+
+		cols = append(cols, Column{
+			ColumnName: col.Name,
+			DataType:   dtype,
+		})
+
+		if dtype == "VARCHAR2" && col.Size == 0 {
+			return tbdef, fmt.Errorf("VARCHAR definition requires size more than 0")
+		}
+
+		var ddlCol strings.Builder
+		ddlCol.WriteString(fmt.Sprintf("%s %s", col.Name, dtype))
+		if col.Size > 0 {
+			ddlCol.WriteString(fmt.Sprintf("(%d)", col.Size))
+		}
+
+		if !col.AllowNull {
+			xAllowNull := false
+			if dtype == "VARCHAR2" && col.Type.Name() == "NullString" {
+				xAllowNull = true
+			}
+
+			if !xAllowNull {
+				ddlCol.WriteString(" NOT NULL")
+			}
+		}
+
+		if col.IsKey {
+			keyField = col.Name
+			ddlCol.WriteString(" PRIMARY KEY")
+		}
+
+		ddlCols = append(ddlCols, ddlCol.String())
+	}
+
+	createDDL := fmt.Sprintf("CREATE TABLE %s.%s (\n\t%s\n)", schema, table, strings.Join(ddlCols, "\n\t,"))
+
+	return TabledDef{
+		Name:      table,
+		Schema:    schema,
+		KeyField:  keyField,
+		Columns:   cols,
+		CreateDDL: createDDL,
+	}, nil
+}
+
 func convertTypeToOraType(model reflect.Type) string {
 	kind := model.Kind()
 	switch kind {
@@ -637,40 +654,40 @@ func oraGetColumns(db *sqlx.DB, schema, table string) ([]Column, error) {
 	return cols, nil
 }
 
-func oraGetKeyColumnName(db *sqlx.DB, schema, table string) (string, error) {
-	qry := `
-		select
-			b.COLUMN_NAME
-		from
-			all_constraints a
-			inner join
-			all_cons_columns b
-			on
-				a.constraint_name = b.constraint_name
-		where
-			a.owner = ?
-			and a.table_name = ?
-			and a.constraint_type = 'P';
-	`
+// func oraGetKeyColumnName(db *sqlx.DB, schema, table string) (string, error) {
+// 	qry := `
+// 		select
+// 			b.COLUMN_NAME
+// 		from
+// 			all_constraints a
+// 			inner join
+// 			all_cons_columns b
+// 			on
+// 				a.constraint_name = b.constraint_name
+// 		where
+// 			a.owner = ?
+// 			and a.table_name = ?
+// 			and a.constraint_type = 'P';
+// 	`
 
-	type ColName struct {
-		Name string `db:"COLUMN_NAME"`
-	}
+// 	type ColName struct {
+// 		Name string `db:"COLUMN_NAME"`
+// 	}
 
-	qry = db.Rebind(qry)
-	var cols []ColName
-	if err := db.Select(&cols, qry, strings.ToUpper(schema), strings.ToUpper(table)); err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			return "", err
-		}
-	}
+// 	qry = db.Rebind(qry)
+// 	var cols []ColName
+// 	if err := db.Select(&cols, qry, strings.ToUpper(schema), strings.ToUpper(table)); err != nil {
+// 		if !errors.Is(err, sql.ErrNoRows) {
+// 			return "", err
+// 		}
+// 	}
 
-	if len(cols) > 1 {
-		return "", fmt.Errorf("store doesn't support multiple key field")
-	}
+// 	if len(cols) > 1 {
+// 		return "", fmt.Errorf("store doesn't support multiple key field")
+// 	}
 
-	return cols[0].Name, nil
-}
+// 	return cols[0].Name, nil
+// }
 
 func (p *oracleRepository[K, T]) createTransaction(opt *queryOption) (*sqlx.Tx, error) {
 	if opt.Tx != nil {
@@ -688,7 +705,7 @@ func (p *oracleRepository[K, T]) createMultiInsertQuery(values []T) (strSql stri
 		return
 	}
 
-	tb := p.model.GetTableDef()
+	tb := p.tableDef
 	var columnMap = make(map[string]Column)
 	for _, col := range p.columns {
 		key := strings.ToUpper(col.ColumnName)
@@ -708,13 +725,15 @@ func (p *oracleRepository[K, T]) createMultiInsertQuery(values []T) (strSql stri
 	insertColumnNames := p.columnNames
 	mtype := "plain"
 
-	smodel, isSmodel := p.model.(SQLModelHelper)
-	if isSmodel {
-		insertColumnNames = smodel.GetInsertColumnNames()
-		mtype = "smodel"
-	}
+	// smodel, isSmodel := p.model.(SQLModelHelper)
+	// if isSmodel {
+	// 	insertColumnNames = smodel.GetInsertColumnNames()
+	// 	mtype = "smodel"
+	// }
 
-	sgen, isSgen := p.model.(SQLInsertGenerator)
+	mval := reflect.ValueOf(values[0])
+
+	sgen, isSgen := mval.Interface().(SQLInsertGenerator)
 	if isSgen {
 		insertColumnNames, _, _ = sgen.GenerateInsertParts()
 		mtype = "sgen"
@@ -731,12 +750,12 @@ func (p *oracleRepository[K, T]) createMultiInsertQuery(values []T) (strSql stri
 	var insertRows = make([][]any, len(insertColumnNames))
 	for i, val := range values {
 		switch mtype {
-		case "smodel":
-			smodel = reflect.ValueOf(val).Interface().(SQLModelHelper)
-			sval := smodel.GetInsertArgs()
-			for iv := range sval {
-				insertRows[iv] = append(insertRows[iv], sval[iv])
-			}
+		// case "smodel":
+		// 	smodel = reflect.ValueOf(val).Interface().(SQLModelHelper)
+		// 	sval := smodel.GetInsertArgs()
+		// 	for iv := range sval {
+		// 		insertRows[iv] = append(insertRows[iv], sval[iv])
+		// 	}
 		case "sgen":
 			sgen = reflect.ValueOf(val).Interface().(SQLInsertGenerator)
 			_, _, sval := sgen.GenerateInsertParts()
@@ -882,54 +901,54 @@ func makeOraValueSlice(insertFields []Column, insertValues [][]any) (argValues [
 	return argValues
 }
 
-func (p *oracleRepository[K, T]) createOracleMultiInsertQueryAll(values []T) (valueSql string, args []any, err error) {
-	if len(values) == 0 {
-		err = fmt.Errorf("values is zero length slice")
-		return
-	}
+// func (p *oracleRepository[K, T]) createOracleMultiInsertQueryAll(values []T) (valueSql string, args []any, err error) {
+// 	if len(values) == 0 {
+// 		err = fmt.Errorf("values is zero length slice")
+// 		return
+// 	}
 
-	tb := p.model.GetTableDef()
-	var fieldMaps = make([]map[string]any, len(values))
-	for i, val := range values {
-		fieldMap, err := p.createFieldsAndValuesMapFromModelType(val, "db")
-		if err != nil {
-			return valueSql, args, err
-		}
+// 	tb := p.model.GetTableDef()
+// 	var fieldMaps = make([]map[string]any, len(values))
+// 	for i, val := range values {
+// 		fieldMap, err := p.createFieldsAndValuesMapFromModelType(val, "db")
+// 		if err != nil {
+// 			return valueSql, args, err
+// 		}
 
-		fieldMaps[i] = fieldMap
-	}
+// 		fieldMaps[i] = fieldMap
+// 	}
 
-	var columns []string
-	for k, _ := range fieldMaps[0] {
-		columns = append(columns, k)
-	}
+// 	var columns []string
+// 	for k, _ := range fieldMaps[0] {
+// 		columns = append(columns, k)
+// 	}
 
-	valueSql = "INSERT ALL"
+// 	valueSql = "INSERT ALL"
 
-	smodel, ok := p.model.(SQLModelHelper)
-	if ok {
-		columns = smodel.GetInsertColumnNames()
-	}
+// 	smodel, ok := p.model.(SQLModelHelper)
+// 	if ok {
+// 		columns = smodel.GetInsertColumnNames()
+// 	}
 
-	for i, fm := range fieldMaps {
-		subins := ""
-		if ok {
-			smodel = reflect.ValueOf(values[i]).Interface().(SQLModelHelper)
-			args = append(args, smodel.GetInsertArgs()...)
-			ph := smodel.GetInsertPlaceholders()
-			subins = strings.Join(ph, ",")
-		} else {
-			var argValues []any
-			for k, _ := range fm {
-				argValues = append(argValues, fm[k])
-			}
-			subins, _, _ = sqlx.In("?", argValues...)
-			args = append(args, argValues...)
-		}
+// 	for i, fm := range fieldMaps {
+// 		subins := ""
+// 		if ok {
+// 			smodel = reflect.ValueOf(values[i]).Interface().(SQLModelHelper)
+// 			args = append(args, smodel.GetInsertArgs()...)
+// 			ph := smodel.GetInsertPlaceholders()
+// 			subins = strings.Join(ph, ",")
+// 		} else {
+// 			var argValues []any
+// 			for k, _ := range fm {
+// 				argValues = append(argValues, fm[k])
+// 			}
+// 			subins, _, _ = sqlx.In("?", argValues...)
+// 			args = append(args, argValues...)
+// 		}
 
-		valueSql += fmt.Sprintf("\nINTO %s.%s (%s) VALUES (%s)", tb.Schema, tb.Name, strings.Join(columns, ","), subins)
-	}
+// 		valueSql += fmt.Sprintf("\nINTO %s.%s (%s) VALUES (%s)", tb.Schema, tb.Name, strings.Join(columns, ","), subins)
+// 	}
 
-	valueSql += "\nSELECT 1 FROM DUAL"
-	return
-}
+// 	valueSql += "\nSELECT 1 FROM DUAL"
+// 	return
+// }

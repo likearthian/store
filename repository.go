@@ -25,10 +25,11 @@ type Repository[K comparable, T any] interface {
 }
 
 type repository struct {
-	Name        string
-	Schema      string
-	tableDef    TabledDef
-	model       Model
+	Name     string
+	Schema   string
+	tableDef TabledDef
+	// model       Model
+	modelType   reflect.Type
 	modelTags   map[string]int
 	columns     []Column
 	columnNames []string
