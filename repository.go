@@ -80,8 +80,10 @@ func (r *repository) createFieldsAndValuesMapFromModelType(value any, fieldTag s
 		col := ""
 		tagValue, ok := field.Tag.Lookup(fieldTag)
 		if ok {
-			name, _, _, _, _ := ParseDBTag(tagValue)
-			col = name
+			name, _, isAuto, _, _ := ParseDBTag(tagValue)
+			if !isAuto {
+				col = name
+			}
 		}
 
 		if col == "" {

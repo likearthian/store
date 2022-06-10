@@ -194,12 +194,14 @@ func (p *oracleRepository[K, T]) Insert(ctx context.Context, value T, options ..
 		return zeroKey, err
 	}
 
-	var columns []string = p.columnNames
+	var columns []string
+	fmt.Printf("columns: %v\n", columns)
 	var values []interface{}
 	for k := range fieldMap {
 		columns = append(columns, k)
 		values = append(values, fieldMap[k])
 	}
+	fmt.Printf("columns: %v\n", columns)
 
 	tx, err := p.createTransaction(opt)
 	if err != nil {
@@ -245,6 +247,8 @@ func (p *oracleRepository[K, T]) Insert(ctx context.Context, value T, options ..
 	args = append(args, sql.Out{Dest: &id})
 
 	qry = tx.Rebind(qry)
+	// fmt.Printf("qry: %s\n", qry)
+	// fmt.Printf("args: %+v\n", args)
 	_, err = tx.ExecContext(ctx, qry, args...)
 	if err != nil {
 		return id, wrapPostgresError(err)
