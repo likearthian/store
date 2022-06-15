@@ -18,6 +18,7 @@ type queryOption struct {
 	Tx     Transaction
 	Limit  int
 	Offset int64
+	Sorter []string
 }
 
 func WithTransaction(tx Transaction) QueryOption {
@@ -35,5 +36,11 @@ func WithLimit(limit int) QueryOption {
 func WithOffset(offset int64) QueryOption {
 	return func(o *queryOption) {
 		o.Offset = offset
+	}
+}
+
+func WithSorter(sorter []string) QueryOption {
+	return func(o *queryOption) {
+		o.Sorter = sorter
 	}
 }

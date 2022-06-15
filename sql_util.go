@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -33,4 +34,36 @@ func wrapPostgresError(err error) error {
 	}
 
 	return err
+}
+
+func MakeSortClause(sorter []string, sortFieldMap map[string]string) string {
+	if len(sorter) == 0 {
+		return ""
+	}
+
+	var srt []string
+	for _, s := range sorter {
+		op := ""
+		field := strings.ToLower(s)
+		if s[:1] == "-" || s[:1] == "+" {
+			op = s[:1]
+			field = strings.ToLower(s[1:])
+		}
+
+		if op == "-" {
+			op = "DESC"
+		} else {
+			op = "ASC"
+		}
+
+		if sortFieldMap != nil {
+			if mf, ok := sortFieldMap[field]; ok {
+				field = mf
+			}
+		}
+
+		srt = append(srt, fmt.Sprintf("%s %s", field, op))
+	}
+
+	return strings.Join(srt, ",")
 }

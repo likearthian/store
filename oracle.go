@@ -128,6 +128,12 @@ func (p *oracleRepository[K, T]) Select(ctx context.Context, filterMap map[strin
 		filter = "WHERE " + filter
 	}
 
+	sort := MakeSortClause(opt.Sorter, nil)
+
+	if sort != "" {
+		sort = fmt.Sprintf(" ORDER BY %s", sort)
+	}
+
 	tx, err := p.createTransaction(opt)
 	if err != nil {
 		return err
@@ -140,9 +146,8 @@ func (p *oracleRepository[K, T]) Select(ctx context.Context, filterMap map[strin
 
 	columns := strings.Join(p.columnNames, ",")
 	tableDef := p.tableDef
-	qry := fmt.Sprintf("SELECT %s FROM %s.%s %s", columns, tableDef.Schema, tableDef.Name, filter)
+	qry := fmt.Sprintf("SELECT %s FROM %s.%s %s %s", columns, tableDef.Schema, tableDef.Name, filter, sort)
 	qry = tx.Rebind(qry)
-
 	if err := tx.SelectContext(ctx, dest, qry, argParam...); err != nil {
 		return wrapPostgresError(err)
 	}
@@ -790,35 +795,6 @@ func (p *oracleRepository[K, T]) createMultiInsertQuery(values []T) (strSql stri
 	return
 }
 
-// func createOraInsertQuery(schema, tablename string, value any) (qry string, args []any, err error) {
-// 	vtype := "struct"
-// 	var cols []string
-// 	var placeholders []string
-// 	var vVal reflect.Value
-
-// 	sqlInserter, isSQLInserter := value.(SQLInserter)
-// 	if isSQLInserter {
-// 		vtype = "SQLInserter"
-// 	} else {
-// 		vVal = reflect.ValueOf(value)
-// 		switch vVal.Type().Kind() {
-// 		case reflect.Struct:
-// 			vtype = "struct"
-// 		case reflect.Map:
-// 			vtype = "map"
-// 		default:
-// 			return qry, args, fmt.Errorf("value of type %T is not supported", value)
-// 		}
-// 	}
-
-// 	switch vtype {
-// 	case "SQLInserter":
-// 		cols, placeholders, args = sqlInserter.GenerateInsertParts()
-// 	case "struct":
-
-// 	}
-// }
-
 func makeOraValueSlice(insertFields []Column, insertValues [][]any) (argValues []any) {
 	argValues = make([]any, len(insertValues))
 	for i, value := range insertValues {
@@ -904,55 +880,3 @@ func makeOraValueSlice(insertFields []Column, insertValues [][]any) (argValues [
 
 	return argValues
 }
-
-// func (p *oracleRepository[K, T]) createOracleMultiInsertQueryAll(values []T) (valueSql string, args []any, err error) {
-// 	if len(values) == 0 {
-// 		err = fmt.Errorf("values is zero length slice")
-// 		return
-// 	}
-
-// 	tb := p.model.GetTableDef()
-// 	var fieldMaps = make([]map[string]any, len(values))
-// 	for i, val := range values {
-// 		fieldMap, err := p.createFieldsAndValuesMapFromModelType(val, "db")
-// 		if err != nil {
-// 			return valueSql, args, err
-// 		}
-
-// 		fieldMaps[i] = fieldMap
-// 	}
-
-// 	var columns []string
-// 	for k, _ := range fieldMaps[0] {
-// 		columns = append(columns, k)
-// 	}
-
-// 	valueSql = "INSERT ALL"
-
-// 	smodel, ok := p.model.(SQLModelHelper)
-// 	if ok {
-// 		columns = smodel.GetInsertColumnNames()
-// 	}
-
-// 	for i, fm := range fieldMaps {
-// 		subins := ""
-// 		if ok {
-// 			smodel = reflect.ValueOf(values[i]).Interface().(SQLModelHelper)
-// 			args = append(args, smodel.GetInsertArgs()...)
-// 			ph := smodel.GetInsertPlaceholders()
-// 			subins = strings.Join(ph, ",")
-// 		} else {
-// 			var argValues []any
-// 			for k, _ := range fm {
-// 				argValues = append(argValues, fm[k])
-// 			}
-// 			subins, _, _ = sqlx.In("?", argValues...)
-// 			args = append(args, argValues...)
-// 		}
-
-// 		valueSql += fmt.Sprintf("\nINTO %s.%s (%s) VALUES (%s)", tb.Schema, tb.Name, strings.Join(columns, ","), subins)
-// 	}
-
-// 	valueSql += "\nSELECT 1 FROM DUAL"
-// 	return
-// }
