@@ -641,6 +641,8 @@ func convertTypeToOraType(model reflect.Type) string {
 			return "TIMESTAMP"
 		case "NullString":
 			return "VARCHAR2"
+		case "NullFloat64", "NullInt32", "NullInt64":
+			return "NUMBER"
 		default:
 			return "UNKNOWN"
 		}
@@ -847,6 +849,10 @@ func makeOraValueSlice(insertFields []Column, insertValues [][]any) (argValues [
 				case int:
 					val = sql.NullFloat64{Valid: true, Float64: float64(v)}
 				case int64:
+					val = sql.NullFloat64{Valid: true, Float64: float64(v)}
+				case float32:
+					val = sql.NullFloat64{Valid: true, Float64: float64(v)}
+				case float64:
 					val = sql.NullFloat64{Valid: true, Float64: float64(v)}
 				case sql.NullInt32:
 					val = sql.NullFloat64{Valid: false}
