@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type Transaction interface {
@@ -141,32 +142,35 @@ const (
 	ContextTransactionKey = "tx"
 )
 
-func Map[In any, Out any](list []In, mapFn func(val In) Out) []Out {
-	var newSlice = make([]Out, len(list))
-	for i, val := range list {
-		newSlice[i] = mapFn(val)
-	}
+func MergeChan[T any](exit <-chan struct{}, cs ...<-chan T) chan T {
+	var wg sync.WaitGroup
+	out := make(chan T)
 
-	return newSlice
-}
-
-func SliceContains[T comparable](list []T, val T) bool {
-	for _, item := range list {
-		if item == val {
-			return true
+	// Start an output goroutine for each input channel in cs.  output
+	// copies va=lues from c to out until c is closed, then calls wg.Done.
+	output := func(c <-chan T) {
+		defer func() {
+			//fmt.Println("wg.Done()")
+			wg.Done()
+		}()
+		for n := range c {
+			select {
+			case out <- n:
+			case <-exit:
+				return
+			}
 		}
 	}
-
-	return false
-}
-
-func Filter[T any](slice []T, filterFunc func(val T) bool) []T {
-	var newSlice []T
-	for i, val := range slice {
-		if filterFunc(val) {
-			newSlice = append(newSlice, slice[i])
-		}
+	wg.Add(len(cs))
+	for _, c := range cs {
+		go output(c)
 	}
 
-	return newSlice
+	// Start a goroutine to close out once all the output goroutines are
+	// done.  This must start after the wg.Add call.
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+	return out
 }
