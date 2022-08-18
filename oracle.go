@@ -384,41 +384,18 @@ func (p *oracleRepository[K, T]) Delete(ctx context.Context, id []K, options ...
 	}
 
 	tb := p.tableDef
-	concurr := 20
-	batches := SplitBatch(SplitBatch(id, 512), concurr)
-
-	rchan := make([]<-chan error, len(batches))
+	batches := SplitBatch(id, 512)
 
 	for i := range batches {
-		ch := make(chan error)
-		go func(list [][]K, res chan<- error) {
-			for _, ll := range list {
-				qry := fmt.Sprintf("DELETE FROM %s.%s WHERE %s in (?)", tb.Schema, tb.Name, tb.KeyField)
-				var args []any
-				qry, args, err = sqlx.In(qry, ll)
-				if err != nil {
-					res <- fmt.Errorf("failed to expand delete query. %s", err)
-					return
-				}
-
-				qry = tx.Rebind(qry)
-				if _, err := tx.ExecContext(ctx, qry, args...); err != nil {
-					res <- err
-					return
-				}
-
-				res <- nil
-			}
-			close(ch)
-		}(batches[i], ch)
-		rchan[i] = ch
-	}
-
-	xchan := make(chan struct{})
-	trsChan := MergeChan(xchan, rchan...)
-
-	for err := range trsChan {
+		qry := fmt.Sprintf("DELETE FROM %s.%s WHERE %s in (?)", tb.Schema, tb.Name, tb.KeyField)
+		var args []any
+		qry, args, err = sqlx.In(qry, batches[i])
 		if err != nil {
+			return fmt.Errorf("failed to expand delete query. %s", err)
+		}
+
+		qry = tx.Rebind(qry)
+		if _, err := tx.ExecContext(ctx, qry, args...); err != nil {
 			return err
 		}
 	}
