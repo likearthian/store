@@ -36,7 +36,7 @@ type repository struct {
 }
 
 func (r repository) modelTagExists(name string) bool {
-	_, ok := r.modelTags[name]
+	_, ok := r.modelTags[strings.ToUpper(name)]
 	return ok
 }
 

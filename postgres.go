@@ -39,7 +39,7 @@ func CreatePostgresRepository[K comparable, T any](db *sqlx.DB, options ...Repos
 	}
 
 	cols = Filter(cols, func(val Column) bool {
-		_, ok := modelTags[val.ColumnName]
+		_, ok := modelTags[strings.ToUpper(val.ColumnName)]
 		return ok
 	})
 
@@ -183,10 +183,12 @@ func (p *postgresRepository[K, T]) Insert(ctx context.Context, value T, options 
 	}
 
 	tabledef := p.tableDef
-	qry := fmt.Sprintf("INSERT INTO %s.%s VALUES (?)", tabledef.Schema, tabledef.Name)
+	qry := fmt.Sprintf("INSERT INTO %s.%s (%s) VALUES (?)", tabledef.Schema, tabledef.Name, strings.Join(columns, ","))
 	qry, args, err := sqlx.In(qry, values)
 	qry = tx.Rebind(qry)
 
+	// fmt.Printf("qry: %s\n", qry)
+	// fmt.Printf("args: %+v\n", args)
 	_, err = tx.ExecContext(ctx, qry, args...)
 	if err != nil {
 		return zeroKey, wrapPostgresError(err)
@@ -499,7 +501,7 @@ func pgGetColumns(db *sqlx.DB, schema, table string) ([]Column, error) {
 
 	qry = db.Rebind(qry)
 	var cols []Column
-	if err := db.Select(&cols, qry, strings.ToUpper(schema), strings.ToUpper(table)); err != nil {
+	if err := db.Select(&cols, qry, schema, table); err != nil {
 		return nil, err
 	}
 
