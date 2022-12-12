@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -66,4 +67,88 @@ func MakeSortClause(sorter []string, sortFieldMap map[string]string) string {
 	}
 
 	return strings.Join(srt, ",")
+}
+
+type FilterNull interface {
+	IsNull() bool
+}
+
+type filterNull bool
+
+func (fn filterNull) IsNull() bool {
+	return bool(fn)
+}
+
+func FilterNullFrom(isNull bool) FilterNull {
+	return filterNull(isNull)
+}
+
+func ParseFilterMapIntoWhereClause(filterMap map[string]any) (whereClause string, args []any, err error) {
+	where := ""
+	for k, v := range filterMap {
+		vval := reflect.ValueOf(v)
+		val := vval.Interface()
+
+		if fnull, ok := val.(FilterNull); ok {
+			if len(where) > 0 {
+				where += " AND "
+			}
+			isNot := ""
+			if !fnull.IsNull() {
+				isNot = "NOT "
+			}
+			where += fmt.Sprintf("%s IS %sNULL", k, isNot)
+			continue
+		}
+
+		if vval.Kind() != reflect.Slice {
+			if len(where) > 0 {
+				where += " AND "
+			}
+			where += k + " = ?"
+			args = append(args, val)
+			continue
+		}
+
+		if vval.Len() > 0 {
+			if f, arg, err := parameterizedFilterCriteriaSlice(k, val); err == nil {
+				if len(where) > 0 {
+					where += " AND "
+				}
+
+				where += f
+				args = append(args, arg)
+			}
+		}
+	}
+
+	return sqlx.In(where, args...)
+}
+
+func parameterizedFilterCriteriaSlice(fieldname string, values interface{}) (string, any, error) {
+	where := fieldname
+	vtype := reflect.TypeOf(values)
+	if vtype.Kind() == reflect.Ptr {
+		vtype = vtype.Elem()
+	}
+
+	if vtype.Kind() != reflect.Slice {
+		return "", nil, fmt.Errorf("expecting slice as values, got %s", vtype.Kind().String())
+	}
+
+	s := reflect.ValueOf(values)
+	if s.Len() == 0 {
+		return "", nil, fmt.Errorf("cannot use empty slice to parameterized")
+	}
+
+	var value interface{}
+	if s.Len() > 1 {
+		where += " IN(?)"
+		value = values
+	} else {
+		where += " = ?"
+		value = s.Index(0).Interface()
+	}
+
+	return where, value, nil
 }

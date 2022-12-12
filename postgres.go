@@ -9,42 +9,62 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-type postgresRepository[K comparable, T Model] struct {
+type postgresRepository[K comparable, T any] struct {
 	repository
-	db        *sqlx.DB
-	tableName string
+	db *sqlx.DB
 }
 
-func CreatePostgresRepository[K comparable, T Model](db *sqlx.DB, tableName string, options ...RepositoryOption[T]) (Repository[K, T], error) {
+func CreatePostgresRepository[K comparable, T any](db *sqlx.DB, options ...RepositoryOption[T]) (Repository[K, T], error) {
 	opt := &option[T]{}
 	for _, op := range options {
 		op(opt)
 	}
 
-	var model T
-	m := reflect.TypeOf(model)
-	if m.Kind() == reflect.Ptr {
-		m = m.Elem()
+	var entity T
+
+	mval := reflect.ValueOf(entity)
+	if mval.Type().Kind() == reflect.Ptr {
+		mval = mval.Elem()
 	}
 
-	modelTags := createModelTags(m, "db")
+	modelTags := createModelTags(mval.Type(), "db")
+	tb, err := pgCreateTableDef(mval)
+	if err != nil {
+		return nil, err
+	}
+
+	cols, err := pgGetColumns(db, tb.Schema, tb.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	cols = Filter(cols, func(val Column) bool {
+		_, ok := modelTags[val.ColumnName]
+		return ok
+	})
+
+	colNames := Map(cols, func(val Column) string {
+		return val.ColumnName
+	})
 
 	repo := &postgresRepository[K, T]{
 		repository: repository{
-			Name:      model.GetTableDef().Name,
-			modelTags: modelTags,
-			tableDef:  model.GetTableDef(),
-			modelType: m,
+			Name:        tb.Name,
+			Schema:      tb.Schema,
+			tableDef:    tb,
+			modelType:   mval.Type(),
+			modelTags:   modelTags,
+			columns:     cols,
+			columnNames: colNames,
 		},
-		db:        db,
-		tableName: tableName,
+		db: db,
 	}
 
-	if opt.initValues != nil {
-		if err := repo.init(opt.initValues); err != nil {
-			return nil, err
-		}
-	}
+	// if opt.initValues != nil {
+	// 	if err := repo.init(opt.initValues); err != nil {
+	// 		return nil, err
+	// 	}
+	// }
 
 	return repo, nil
 }
@@ -111,9 +131,11 @@ func (p *postgresRepository[K, T]) Select(ctx context.Context, filterMap map[str
 		defer tx.Rollback()
 	}
 
+	paging := CreatePgLimitOffsetSql(opt.Limit, int(opt.Offset))
+
 	columns := strings.Join(p.columnNames, ",")
 	tableDef := p.tableDef
-	qry := fmt.Sprintf("SELECT %s FROM %s.%s %s", columns, tableDef.Schema, tableDef.Name, filter)
+	qry := fmt.Sprintf("SELECT %s FROM %s.%s %s%s", columns, tableDef.Schema, tableDef.Name, filter, paging)
 	qry = tx.Rebind(qry)
 
 	if err := tx.SelectContext(ctx, dest, qry, argParam...); err != nil {
@@ -223,12 +245,7 @@ func (p *postgresRepository[K, T]) Update(ctx context.Context, id K, keyvals map
 		op(opt)
 	}
 
-	var columns []string
-	var values []interface{}
-	for k, _ := range keyvals {
-		columns = append(columns, k)
-		values = append(values, keyvals[k])
-	}
+	qry, args := p.createUpdateQuery(id, keyvals)
 
 	tx, err := p.createTransaction(opt)
 	if err != nil {
@@ -239,10 +256,6 @@ func (p *postgresRepository[K, T]) Update(ctx context.Context, id K, keyvals map
 		defer tx.Rollback()
 	}
 
-	tabledef := p.tableDef
-	qry := fmt.Sprintf("INSERT INTO %s.%s VALUES (?)", tabledef.Schema, tabledef.Name)
-
-	qry, args, err := sqlx.In(qry, values)
 	qry = tx.Rebind(qry)
 
 	_, err = tx.ExecContext(ctx, qry, args...)
@@ -250,7 +263,11 @@ func (p *postgresRepository[K, T]) Update(ctx context.Context, id K, keyvals map
 		return wrapPostgresError(err)
 	}
 
-	return tx.Commit()
+	if opt.Tx == nil {
+		return tx.Commit()
+	}
+
+	return nil
 }
 
 func (p *postgresRepository[K, T]) Upsert(ctx context.Context, id K, value T, options ...QueryOption) error {
@@ -276,12 +293,20 @@ func (p *postgresRepository[K, T]) Begin(ctx context.Context) (Transaction, erro
 	return &sqlTransaction{Tx: tx}, nil
 }
 
-func (p *postgresRepository[K, T]) createUpdateParam(keyvals map[string]interface{}) interface{} {
+func (p *postgresRepository[K, T]) createUpdateQuery(id K, keyvals map[string]interface{}) (qry string, args []any) {
+	tb := p.tableDef
+	var sets []string
+	for k, v := range keyvals {
+		sets = append(sets, fmt.Sprintf("%s = ?", k))
+		args = append(args, v)
+	}
 
-	return nil
+	qry = fmt.Sprintf("UPDATE %s.%s SET %s WHERE %s = ?", tb.Schema, tb.Name, strings.Join(sets, ","), tb.KeyField)
+	args = append(args, id)
+	return
 }
 
-func (p *postgresRepository[K, T]) parseFilterMapIntoWhereClause(filterMap map[string]interface{}) (string, []interface{}, error) {
+func (p *postgresRepository[K, T]) parseFilterMapIntoWhereClause(filterMap map[string]any) (string, []interface{}, error) {
 	where := ""
 	var args []interface{}
 	for k, v := range filterMap {
@@ -291,6 +316,19 @@ func (p *postgresRepository[K, T]) parseFilterMapIntoWhereClause(filterMap map[s
 
 		vval := reflect.ValueOf(v)
 		val := vval.Interface()
+
+		if fnull, ok := val.(FilterNull); ok {
+			if len(where) > 0 {
+				where += " AND "
+			}
+			isNot := ""
+			if !fnull.IsNull() {
+				isNot = "NOT "
+			}
+			where += fmt.Sprintf("%s IS %sNULL", k, isNot)
+			continue
+		}
+
 		if vval.Kind() != reflect.Slice {
 			if len(where) > 0 {
 				where += " AND "
@@ -305,6 +343,7 @@ func (p *postgresRepository[K, T]) parseFilterMapIntoWhereClause(filterMap map[s
 				if len(where) > 0 {
 					where += " AND "
 				}
+
 				where += f
 				args = append(args, arg)
 			}
@@ -371,7 +410,7 @@ func pgCreateTableDef(mval reflect.Value) (TabledDef, error) {
 	var ddlCols []string
 	var keyField string
 	for _, col := range colInfos {
-		dtype := convertTypeToOraType(col.Type)
+		dtype := convertTypeToPgType(col.Type)
 		if dtype == "UNKNOWN" {
 			return tbdef, fmt.Errorf("unknown datatype for Go type %s", mval.Type().Name())
 		}
@@ -412,4 +451,75 @@ func pgCreateTableDef(mval reflect.Value) (TabledDef, error) {
 		Columns:   cols,
 		CreateDDL: createDDL,
 	}, nil
+}
+
+func convertTypeToPgType(model reflect.Type) string {
+	kind := model.Kind()
+	switch kind {
+	case reflect.String:
+		return "VARCHAR2"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Uint,
+		reflect.Uint8, reflect.Uint16, reflect.Uint32:
+		return "INTEGER"
+	case reflect.Int64, reflect.Uint64:
+		return "BIGINT"
+	case reflect.Float32:
+		return "REAL"
+	case reflect.Float64:
+		return "DOUBLE PRECISION"
+	case reflect.Struct:
+		switch model.Name() {
+		case "Time":
+			return "TIMESTAMP"
+		case "NullString", "String":
+			return "VARCHAR2"
+		case "NullFloat64", "Float":
+			return "DOUBLE PRECISION"
+		case "NullInt32", "NullInt64", "Int":
+			return "INTEGER"
+		default:
+			return "UNKNOWN"
+		}
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func pgGetColumns(db *sqlx.DB, schema, table string) ([]Column, error) {
+	qry := `
+		SELECT
+			column_name "column_name"
+			,CASE WHEN strpos(data_type, 'timestamp') > 0 THEN 'timestamp'
+				WHEN strpos(data_type, 'character varying') > 0 THEN 'varchar'
+				ELSE data_type END "data_type"
+		FROM information_schema.columns
+		WHERE
+			table_schema = ?
+			and table_name = ?`
+
+	qry = db.Rebind(qry)
+	var cols []Column
+	if err := db.Select(&cols, qry, strings.ToUpper(schema), strings.ToUpper(table)); err != nil {
+		return nil, err
+	}
+
+	return cols, nil
+}
+
+func CreatePgLimitOffsetSql(limit, offset int) string {
+	if limit < 0 {
+		limit = 0
+	}
+
+	qry := strings.Builder{}
+
+	if limit > 0 {
+		qry.WriteString(fmt.Sprintf(" LIMIT %d", limit))
+	}
+
+	if offset > 0 {
+		qry.WriteString(fmt.Sprintf(" OFFSET %d", offset))
+	}
+
+	return qry.String()
 }

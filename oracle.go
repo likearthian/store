@@ -439,6 +439,19 @@ func (p *oracleRepository[K, T]) parseFilterMapIntoWhereClause(filterMap map[str
 
 		vval := reflect.ValueOf(v)
 		val := vval.Interface()
+
+		if fnull, ok := val.(FilterNull); ok {
+			if len(where) > 0 {
+				where += " AND "
+			}
+			isNot := ""
+			if !fnull.IsNull() {
+				isNot = "NOT "
+			}
+			where += fmt.Sprintf("%s IS %sNULL", k, isNot)
+			continue
+		}
+
 		if vval.Kind() != reflect.Slice {
 			if len(where) > 0 {
 				where += " AND "
