@@ -83,6 +83,20 @@ func FilterNullFrom(isNull bool) FilterNull {
 	return filterNull(isNull)
 }
 
+type FilterStringContains interface {
+	Contains() string
+}
+
+type filterStringContains string
+
+func (fs filterStringContains) Contains() string {
+	return fmt.Sprintf("%%%s%%", fs)
+}
+
+func FilterStringContainsFrom(str string) FilterStringContains {
+	return filterStringContains(str)
+}
+
 func ParseFilterMapIntoWhereClause(filterMap map[string]any) (whereClause string, args []any, err error) {
 	where := ""
 	for k, v := range filterMap {
@@ -98,6 +112,15 @@ func ParseFilterMapIntoWhereClause(filterMap map[string]any) (whereClause string
 				isNot = "NOT "
 			}
 			where += fmt.Sprintf("%s IS %sNULL", k, isNot)
+			continue
+		}
+
+		if fcontain, ok := val.(FilterStringContains); ok {
+			if len(where) > 0 {
+				where += " AND "
+			}
+			where += fmt.Sprintf("%s like ?", k)
+			args = append(args, fcontain.Contains())
 			continue
 		}
 

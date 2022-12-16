@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 )
 
 type postgresRepository[K comparable, T any] struct {
@@ -259,6 +260,8 @@ func (p *postgresRepository[K, T]) Update(ctx context.Context, id K, keyvals map
 	}
 
 	qry = tx.Rebind(qry)
+	fmt.Println("qry:", qry)
+	fmt.Println("args:", args)
 
 	_, err = tx.ExecContext(ctx, qry, args...)
 	if err != nil {
@@ -524,4 +527,43 @@ func CreatePgLimitOffsetSql(limit, offset int) string {
 	}
 
 	return qry.String()
+}
+
+func PostgreLoader(db *sqlx.DB, schema, name string, columns []string, rows <-chan []any) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(pq.CopyInSchema(schema, name, columns...))
+	if err != nil {
+		return err
+	}
+
+	for row := range rows {
+		_, err = stmt.Exec(row...)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = stmt.Exec()
+	if err != nil {
+		return err
+	}
+
+	err = stmt.Close()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("committing transaction")
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+	fmt.Println("committed")
+	return nil
 }
