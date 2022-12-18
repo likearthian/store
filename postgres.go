@@ -147,7 +147,32 @@ func (p *postgresRepository[K, T]) Select(ctx context.Context, filterMap map[str
 }
 
 func (p *postgresRepository[K, T]) SQLQuery(ctx context.Context, dest any, sqlStr string, args []interface{}, options ...QueryOption) error {
-	return fmt.Errorf("not implemented yet")
+	opt := &queryOption{}
+	for _, op := range options {
+		op(opt)
+	}
+
+	tx, err := p.createTransaction(opt)
+	if err != nil {
+		return err
+	}
+
+	if opt.Tx == nil {
+		defer tx.Rollback()
+	}
+
+	sqlStr = tx.Rebind(sqlStr)
+	//fmt.Println("qry:", sqlStr)
+	//fmt.Println("args:", args)
+	if err := tx.SelectContext(ctx, dest, sqlStr, args...); err != nil {
+		return err
+	}
+
+	if opt.Tx == nil {
+		return tx.Commit()
+	}
+
+	return nil
 }
 
 func (p *postgresRepository[K, T]) SQLExec(ctx context.Context, sqlStr string, args []interface{}, options ...QueryOption) error {
@@ -204,16 +229,9 @@ func (p *postgresRepository[K, T]) InsertAll(ctx context.Context, values []T, op
 		op(opt)
 	}
 
-	fieldMap, err := p.createFieldsAndValuesMapFromModelType(values, "db")
+	qry, args, err := p.createMultiInsertQuery(values)
 	if err != nil {
 		return nil, err
-	}
-
-	var columns []string
-	var insertValues []interface{}
-	for k, _ := range fieldMap {
-		columns = append(columns, k)
-		insertValues = append(insertValues, fieldMap[k])
 	}
 
 	tx, err := p.createTransaction(opt)
@@ -225,17 +243,19 @@ func (p *postgresRepository[K, T]) InsertAll(ctx context.Context, values []T, op
 		defer tx.Rollback()
 	}
 
-	tabledef := p.tableDef
-	qry := fmt.Sprintf("INSERT INTO %s.%s VALUES (?)", tabledef.Schema, tabledef.Name)
-	qry, args, err := sqlx.In(qry, values)
 	qry = tx.Rebind(qry)
-
+	fmt.Println("qry:", qry)
+	fmt.Println("args:", args)
 	_, err = tx.ExecContext(ctx, qry, args...)
 	if err != nil {
 		return nil, wrapPostgresError(err)
 	}
 
-	return nil, tx.Commit()
+	if opt.Tx == nil {
+		return nil, tx.Commit()
+	}
+
+	return nil, nil
 }
 
 func (p *postgresRepository[K, T]) Replace(ctx context.Context, id K, value T, options ...QueryOption) error {
@@ -396,6 +416,61 @@ func (p *postgresRepository[K, T]) createTransaction(opt *queryOption) (*sqlx.Tx
 	return p.db.Beginx()
 }
 
+func (p *postgresRepository[K, T]) createMultiInsertQuery(values []T) (strSql string, args []any, err error) {
+	if len(values) == 0 {
+		err = fmt.Errorf("values is zero length slice")
+		return
+	}
+
+	tb := p.tableDef
+	var columnMap = make(map[string]Column)
+	for _, col := range p.columns {
+		key := strings.ToUpper(col.ColumnName)
+		columnMap[key] = col
+	}
+
+	var fieldMaps = make([]map[string]any, len(values))
+	for i, val := range values {
+		fieldMap, err := p.createFieldsAndValuesMapFromModelType(val, "db")
+		if err != nil {
+			return strSql, args, err
+		}
+
+		fieldMaps[i] = fieldMap
+	}
+
+	insertColumnNames := p.columnNames
+
+	var insertFields []Column
+	for _, c := range insertColumnNames {
+		cname := strings.ToUpper(c)
+		if _, ok := columnMap[cname]; ok {
+			insertFields = append(insertFields, columnMap[cname])
+		}
+	}
+
+	var insertValues []string
+	for i, _ := range values {
+		fm := fieldMaps[i]
+		var row = make([]any, len(insertColumnNames))
+		for cx, c := range insertColumnNames {
+			cname := strings.ToUpper(c)
+			if cval, ok := fm[cname]; ok {
+				row[cx] = cval
+			}
+		}
+
+		args = append(args, row)
+		insertValues = append(insertValues, "(?)")
+	}
+
+	strSql = fmt.Sprintf("INSERT INTO %s.%s (%s) VALUES %s", tb.Schema, tb.Name, strings.Join(insertColumnNames, ","), strings.Join(insertValues, ","))
+
+	strSql, args, err = sqlx.In(strSql, args...)
+
+	return
+}
+
 func pgCreateTableDef(mval reflect.Value) (TabledDef, error) {
 	if mval.Type().Kind() == reflect.Ptr {
 		mval = mval.Elem()
@@ -541,7 +616,10 @@ func PostgreLoader(db *sqlx.DB, schema, name string, columns []string, rows <-ch
 		return err
 	}
 
+	n := 0
 	for row := range rows {
+		n++
+		fmt.Println("receiving row", n)
 		_, err = stmt.Exec(row...)
 		if err != nil {
 			return err

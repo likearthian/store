@@ -82,7 +82,7 @@ func (r *repository) createFieldsAndValuesMapFromModelType(value any, fieldTag s
 		if ok {
 			name, _, isAuto, _, _ := ParseDBTag(tagValue)
 			if !isAuto {
-				col = name
+				col = strings.ToUpper(name)
 			}
 		}
 
