@@ -6,8 +6,9 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
-	"github.com/lib/pq"
 )
 
 type postgresRepository[K comparable, T any] struct {
@@ -605,43 +606,47 @@ func CreatePgLimitOffsetSql(limit, offset int) string {
 }
 
 func PostgreLoader(db *sqlx.DB, schema, name string, columns []string, rows <-chan []any) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare(pq.CopyInSchema(schema, name, columns...))
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
 	}
 
-	n := 0
-	for row := range rows {
-		n++
-		fmt.Println("receiving row", n)
-		_, err = stmt.Exec(row...)
-		if err != nil {
-			return err
-		}
-	}
-
-	_, err = stmt.Exec()
-	if err != nil {
+	return conn.Raw(func(dcon any) error {
+		pgconn := dcon.(*stdlib.Conn).Conn()
+		_, err := pgconn.CopyFrom(ctx, pgx.Identifier{schema, name}, columns, ChanToCopyFromSource(rows))
 		return err
+	})
+}
+
+func ChanToCopyFromSource(ch <-chan []any) pgx.CopyFromSource {
+	return &chanCopyFromSource{
+		ch:     ch,
+		err:    nil,
+		values: nil,
+	}
+}
+
+type chanCopyFromSource struct {
+	ch     <-chan []any
+	err    error
+	values []any
+}
+
+func (chs *chanCopyFromSource) Next() bool {
+	v := <-chs.ch
+	if v == nil {
+		return false
 	}
 
-	err = stmt.Close()
-	if err != nil {
-		return err
-	}
+	chs.values = v
+	return true
+}
 
-	fmt.Println("committing transaction")
+func (chs *chanCopyFromSource) Values() ([]any, error) {
+	return chs.values, chs.err
+}
 
-	err = tx.Commit()
-	if err != nil {
-		return err
-	}
-	fmt.Println("committed")
-	return nil
+func (chs *chanCopyFromSource) Err() error {
+	return chs.err
 }
