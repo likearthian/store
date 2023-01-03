@@ -605,21 +605,75 @@ func CreatePgLimitOffsetSql(limit, offset int) string {
 	return qry.String()
 }
 
-func PostgreLoader(db *sqlx.DB, schema, name string, columns []string, rows <-chan []any) error {
+func PostgreLoader(db *sqlx.DB, schema, name string, columns []string, rows <-chan PgSourceRow) error {
 	ctx := context.Background()
-	conn, err := db.Conn(ctx)
+	conn, err := db.Connx(ctx)
 	if err != nil {
 		return err
 	}
 
-	return conn.Raw(func(dcon any) error {
+	cerr := conn.Raw(func(dcon any) error {
 		pgconn := dcon.(*stdlib.Conn).Conn()
-		_, err := pgconn.CopyFrom(ctx, pgx.Identifier{schema, name}, columns, ChanToCopyFromSource(rows))
-		return err
+		tx, err := pgconn.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+
+		n, err := tx.CopyFrom(ctx, pgx.Identifier{schema, name}, columns, ChanToCopyFromSource(rows))
+		if err != nil {
+			fmt.Println("rolling back import")
+			return err
+		}
+		fmt.Println(n, "rows imported")
+		fmt.Println("committing import")
+		return tx.Commit(ctx)
 	})
+	if cerr != nil {
+		fmt.Println("ERROR CONN:", cerr)
+	}
+
+	return cerr
 }
 
-func ChanToCopyFromSource(ch <-chan []any) pgx.CopyFromSource {
+func PGXPostgreLoader(cfg PGConfig, schema, name string, columns []string, rows <-chan PgSourceRow) error {
+	ctx := context.Background()
+	conn, err := PGXConnectPostgresql(cfg)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	n, err := tx.CopyFrom(ctx, pgx.Identifier{schema, name}, columns, ChanToCopyFromSource(rows))
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\nimported %d rows\n", n)
+	return tx.Commit(ctx)
+}
+
+type PgSourceRow struct {
+	value []any
+	err   error
+}
+
+func NewPgSourceRow(value []any, err ...error) PgSourceRow {
+	src := PgSourceRow{value: value}
+	if len(err) > 0 {
+		src.err = err[0]
+	}
+
+	return src
+}
+
+func ChanToCopyFromSource(ch <-chan PgSourceRow) pgx.CopyFromSource {
 	return &chanCopyFromSource{
 		ch:     ch,
 		err:    nil,
@@ -628,18 +682,24 @@ func ChanToCopyFromSource(ch <-chan []any) pgx.CopyFromSource {
 }
 
 type chanCopyFromSource struct {
-	ch     <-chan []any
+	ch     <-chan PgSourceRow
 	err    error
 	values []any
 }
 
 func (chs *chanCopyFromSource) Next() bool {
 	v := <-chs.ch
-	if v == nil {
+	if v.err != nil {
+		chs.err = v.err
 		return false
 	}
 
-	chs.values = v
+	if v.value == nil {
+		fmt.Println("no more rows received")
+		return false
+	}
+
+	chs.values = v.value
 	return true
 }
 

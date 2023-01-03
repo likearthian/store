@@ -3,7 +3,6 @@ module github.com/likearthian/store
 go 1.18
 
 require (
-	github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa
 	github.com/jackc/pgx/v5 v5.2.0
 	github.com/jmoiron/sqlx v1.3.4
 	go.mongodb.org/mongo-driver v1.9.0
@@ -22,7 +21,7 @@ require (
 	github.com/golang/snappy v0.0.1 // indirect
 	github.com/iancoleman/strcase v0.2.0
 	github.com/klauspost/compress v1.13.6 // indirect
-	github.com/lib/pq v1.10.2
+	github.com/lib/pq v1.10.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.0.2 // indirect
