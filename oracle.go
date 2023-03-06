@@ -3,8 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/csv"
 	"fmt"
+	"io"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -812,6 +815,199 @@ func (p *oracleRepository[K, T]) createMultiInsertQuery(values []T) (strSql stri
 	strSql, _, err = sqlx.In(strSql, insertColumnNames)
 
 	return
+}
+
+func (p *oracleRepository[K, T]) CSVLoader(c context.Context, file io.Reader, schema, table string, chunk int, options ...QueryOption) error {
+	opt := &queryOption{}
+	for _, op := range options {
+		op(opt)
+	}
+
+	tx, err := p.createTransaction(opt)
+	if err != nil {
+		return err
+	}
+
+	if opt.Tx == nil {
+		defer tx.Rollback()
+	}
+
+	cr := csv.NewReader(file)
+	var fields []string
+	var fieldTypes []string
+	var columns []Column
+
+	cols, err := oraGetColumns(p.db, schema, table)
+	if err != nil {
+		return err
+	}
+	var columnMap = make(map[string]Column)
+	for _, col := range cols {
+		key := strings.ToUpper(col.ColumnName)
+		columnMap[key] = col
+	}
+
+	var placeHolders string
+
+	ins := func(rows []interface{}) error {
+		qry := fmt.Sprintf("INSERT INTO %s.%s (%s) VALUES (%s)", schema, table, strings.Join(fields, ","), placeHolders)
+		_, err := tx.ExecContext(c, qry, rows...)
+		return err
+	}
+
+	makeValueSlice := func(rows [][]interface{}) []interface{} {
+		var values = make([]interface{}, len(rows))
+		for i, value := range rows {
+			switch columns[i].DataType {
+			case "VARCHAR2", "DATE":
+				sl := make([]string, len(value))
+				for ix, v := range value {
+					val := v.(string)
+					if len(val) > 4000 {
+						val = val[:4000]
+					}
+
+					sl[ix] = val
+				}
+				values[i] = sl
+			case "NUMBER":
+				sl := make([]sql.NullFloat64, len(value))
+				for ix, v := range value {
+					sl[ix] = v.(sql.NullFloat64)
+				}
+				values[i] = sl
+			default:
+				sl := make([]string, len(value))
+				for ix, v := range value {
+					sl[ix] = v.(string)
+				}
+				values[i] = sl
+			}
+		}
+
+		return values
+	}
+
+	createValues := func(records []string, columns []Column) []interface{} {
+		var data []interface{}
+		for i, value := range records {
+			var val interface{} = ""
+			isNull := strings.TrimSpace(value) == "" || strings.TrimSpace(value) == "\\N"
+
+			switch columns[i].DataType {
+			case "VARCHAR2", "DATE":
+				if !isNull {
+					val = value
+				}
+			case "NUMBER":
+				if isNull {
+					val = sql.NullFloat64{Valid: false}
+					break
+				}
+
+				num, err := strconv.ParseFloat(value, 64)
+				if err != nil {
+					fmt.Printf("ERROR parsing float for column %s: %s\n", columns[i].ColumnName, err)
+					val = sql.NullFloat64{Valid: false}
+					break
+				}
+
+				val = sql.NullFloat64{Valid: !isNull, Float64: num}
+			default:
+				val = value
+			}
+
+			data = append(data, val)
+		}
+
+		return data
+	}
+
+	n := 0
+	var rows [][]interface{}
+	for {
+		rec, err := cr.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		// do something with read line
+		if len(fields) == 0 {
+			for _, val := range rec {
+				key := strings.ToUpper(val)
+				dtype := "VARCHAR2"
+				fieldName := "unknown"
+				fields = append(fields, key)
+
+				if col, ok := columnMap[key]; ok {
+					dtype = col.DataType
+					fieldName = col.ColumnName
+				}
+
+				if len(placeHolders) > 0 {
+					placeHolders += ","
+				}
+
+				plc := "?"
+				if dtype == "DATE" {
+					plc = "to_date(?, 'YYYY-MM-DD')"
+				}
+
+				placeHolders += plc
+
+				fieldTypes = append(fieldTypes, dtype)
+				columns = append(columns, Column{ColumnName: fieldName, DataType: dtype})
+			}
+
+			rows = make([][]interface{}, len(fields))
+			continue
+		}
+
+		n++
+		if len(rec) != len(fields) {
+			return fmt.Errorf("number of row %d fields is different than the number of columns", n)
+		}
+
+		data := createValues(rec, columns)
+		for i, _ := range rows {
+			rows[i] = append(rows[i], data[i])
+		}
+
+		if n == chunk {
+			// logger.Debug(fmt.Sprintf("inserting %d rows into %s.%s", n, schema, table))
+			if err := ins(makeValueSlice(rows)); err != nil {
+				return err
+			}
+
+			n = 0
+			rows = make([][]interface{}, len(fields))
+		}
+	}
+
+	if n > 0 {
+		// logger.Debug(fmt.Sprintf("inserting %d rows into %s.%s", n, schema, table))
+		if err := ins(makeValueSlice(rows)); err != nil {
+			return err
+		}
+	}
+
+	if opt.Tx == nil {
+		tx.Commit()
+	}
+
+	return nil
+}
+
+func OraCsvLoader[K comparable, V any](repo Repository[K, V], file io.Reader, schema, table string, chunk int, options ...QueryOption) error {
+	ora, ok := repo.(*oracleRepository[K, V])
+	if !ok {
+		return fmt.Errorf("repo is not of type *oracleRepository[K, V]")
+	}
+
+	return ora.CSVLoader(context.Background(), file, schema, table, chunk, options...)
 }
 
 func makeOraValueSlice(insertFields []Column, insertValues [][]any) (argValues []any) {
