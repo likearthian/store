@@ -133,7 +133,7 @@ func (p *postgresRepository[K, T]) Select(ctx context.Context, filterMap map[str
 		defer tx.Rollback()
 	}
 
-	paging := CreatePgLimitOffsetSql(opt.Limit, int(opt.Offset))
+	paging := CreatePgLimitOffsetSql(opt.Limit, opt.Offset)
 
 	columns := strings.Join(p.columnNames, ",")
 	tableDef := p.tableDef
@@ -587,7 +587,7 @@ func pgGetColumns(db *sqlx.DB, schema, table string) ([]Column, error) {
 	return cols, nil
 }
 
-func CreatePgLimitOffsetSql(limit, offset int) string {
+func CreatePgLimitOffsetSql(limit int, offset int64) string {
 	if limit < 0 {
 		limit = 0
 	}

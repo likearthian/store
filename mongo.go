@@ -245,7 +245,7 @@ func (m *mongoRepository[K, T]) Delete(ctx context.Context, id []K, options ...Q
 	ctx = m.setTransactionContext(ctx, opt)
 
 	tabledef := m.tableDef
-	res, err := m.collection.DeleteMany(ctx, bson.D{{tabledef.KeyField, bson.M{"$in": id}}})
+	res, err := m.collection.DeleteMany(ctx, bson.D{{Key: tabledef.KeyField, Value: bson.M{"$in": id}}})
 	if err != nil {
 		return wrapMongoError(err)
 	}
