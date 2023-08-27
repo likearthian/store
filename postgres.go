@@ -493,7 +493,7 @@ func pgCreateTableDef(mval reflect.Value) (TabledDef, error) {
 	for _, col := range colInfos {
 		dtype := convertTypeToPgType(col.Type)
 		if dtype == "UNKNOWN" {
-			return tbdef, fmt.Errorf("unknown datatype for Go type %s", mval.Type().Name())
+			return tbdef, fmt.Errorf("unknown datatype for Go type %s in %s", col.Type.Name(), mval.Type().Name())
 		}
 
 		cols = append(cols, Column{
@@ -501,23 +501,33 @@ func pgCreateTableDef(mval reflect.Value) (TabledDef, error) {
 			DataType:   dtype,
 		})
 
-		if dtype == "VARCHAR2" && col.Size == 0 {
+		coltype := dtype
+		isArray := false
+		if strings.HasPrefix(dtype, "ARRAY_") {
+			coltype = dtype[6:]
+			isArray = true
+		}
+
+		if coltype == "VARCHAR2" && col.Size == 0 {
 			return tbdef, fmt.Errorf("VARCHAR definition requires size more than 0")
 		}
 
 		var ddlCol strings.Builder
-		ddlCol.WriteString(fmt.Sprintf("%s %s", col.Name, dtype))
+		ddlCol.WriteString(fmt.Sprintf("%s %s", col.Name, coltype))
 		if col.Size > 0 {
-			ddlCol.WriteString(fmt.Sprintf("(%d) ", col.Size))
+			ddlCol.WriteString(fmt.Sprintf("(%d)", col.Size))
+		}
+		if isArray {
+			ddlCol.WriteString("[]")
 		}
 
 		if !col.AllowNull {
-			ddlCol.WriteString("NOT NULL ")
+			ddlCol.WriteString(" NOT NULL")
 		}
 
 		if col.IsKey {
 			keyField = col.Name
-			ddlCol.WriteString("PRIMARY KEY")
+			ddlCol.WriteString(" PRIMARY KEY")
 		}
 
 		ddlCols = append(ddlCols, ddlCol.String())
@@ -548,6 +558,11 @@ func convertTypeToPgType(model reflect.Type) string {
 		return "REAL"
 	case reflect.Float64:
 		return "DOUBLE PRECISION"
+	case reflect.Bool:
+		return "BOOLEAN"
+	case reflect.Slice:
+		subkind := convertTypeToPgType(model.Elem())
+		return "ARRAY_" + subkind
 	case reflect.Struct:
 		switch model.Name() {
 		case "Time":

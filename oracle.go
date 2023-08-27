@@ -850,7 +850,7 @@ func (p *oracleRepository[K, T]) CSVLoader(c context.Context, file io.Reader, sc
 	var placeHolders string
 
 	ins := func(rows []interface{}) error {
-		qry := fmt.Sprintf("INSERT INTO %s.%s (%s) VALUES (%s)", schema, table, strings.Join(fields, ","), placeHolders)
+		qry := tx.Rebind(fmt.Sprintf("INSERT INTO %s.%s (%s) VALUES (%s)", schema, table, strings.Join(fields, ","), placeHolders))
 		_, err := tx.ExecContext(c, qry, rows...)
 		return err
 	}
