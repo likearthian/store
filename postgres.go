@@ -214,14 +214,16 @@ func (p *postgresRepository[K, T]) Insert(ctx context.Context, value T, options 
 	qry, args, err := sqlx.In(qry, values)
 	qry = tx.Rebind(qry)
 
-	// fmt.Printf("qry: %s\n", qry)
-	// fmt.Printf("args: %+v\n", args)
 	_, err = tx.ExecContext(ctx, qry, args...)
 	if err != nil {
 		return zeroKey, wrapPostgresError(err)
 	}
 
-	return zeroKey, tx.Commit()
+	if opt.Tx == nil {
+		return zeroKey, tx.Commit()
+	}
+
+	return zeroKey, nil
 }
 
 func (p *postgresRepository[K, T]) InsertAll(ctx context.Context, values []T, options ...QueryOption) ([]K, error) {
