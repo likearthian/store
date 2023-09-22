@@ -103,7 +103,7 @@ func (p *postgresRepository[K, T]) Get(ctx context.Context, id K, dest *T, optio
 	qry = tx.Rebind(qry)
 
 	if err := tx.GetContext(ctx, dest, qry, argParam...); err != nil {
-		return wrapPostgresError(err)
+		return wrapPostgresError(fmt.Errorf("%w. [QUERY]: %s", err, qry))
 	}
 
 	return tx.Commit()
@@ -309,7 +309,42 @@ func (p *postgresRepository[K, T]) UpsertAll(ctx context.Context, values []T, op
 }
 
 func (p *postgresRepository[K, T]) Delete(ctx context.Context, id []K, options ...QueryOption) error {
-	return fmt.Errorf("delete operation not supported yet")
+	opt := &queryOption{}
+	for _, op := range options {
+		op(opt)
+	}
+
+	tx, err := p.createTransaction(opt)
+	if err != nil {
+		return err
+	}
+
+	if opt.Tx == nil {
+		defer tx.Rollback()
+	}
+
+	tb := p.tableDef
+	batches := SplitBatch(id, 512)
+
+	for i := range batches {
+		qry := fmt.Sprintf("DELETE FROM %s WHERE %s in (?)", tb.FullTableName(), tb.KeyField)
+		var args []any
+		qry, args, err = sqlx.In(qry, batches[i])
+		if err != nil {
+			return fmt.Errorf("failed to expand delete query. %s", err)
+		}
+
+		qry = tx.Rebind(qry)
+		if _, err := tx.ExecContext(ctx, qry, args...); err != nil {
+			return err
+		}
+	}
+
+	if opt.Tx == nil {
+		return tx.Commit()
+	}
+
+	return nil
 }
 
 func (p *postgresRepository[K, T]) Begin(ctx context.Context) (Transaction, error) {
