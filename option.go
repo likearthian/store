@@ -15,10 +15,11 @@ func InitWith[T any](values []T) RepositoryOption[T] {
 type QueryOption func(o *queryOption)
 
 type queryOption struct {
-	Tx     Transaction
-	Limit  int
-	Offset int64
-	Sorter []string
+	Tx              Transaction
+	Limit           int
+	Offset          int64
+	Sorter          []string
+	IgnoreDuplicate bool
 }
 
 func WithTransaction(tx Transaction) QueryOption {
@@ -42,5 +43,11 @@ func WithOffset(offset int64) QueryOption {
 func WithSorter(sorter []string) QueryOption {
 	return func(o *queryOption) {
 		o.Sorter = sorter
+	}
+}
+
+func WithIgnoreDuplicate() QueryOption {
+	return func(o *queryOption) {
+		o.IgnoreDuplicate = true
 	}
 }

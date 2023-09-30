@@ -195,7 +195,7 @@ func (p *postgresRepository[K, T]) Insert(ctx context.Context, value T, options 
 
 	var columns []string
 	var values []interface{}
-	for k, _ := range fieldMap {
+	for k := range fieldMap {
 		columns = append(columns, k)
 		values = append(values, fieldMap[k])
 	}
@@ -211,7 +211,13 @@ func (p *postgresRepository[K, T]) Insert(ctx context.Context, value T, options 
 
 	tabledef := p.tableDef
 	qry := fmt.Sprintf("INSERT INTO %s.%s (%s) VALUES (?)", tabledef.Schema, tabledef.Name, strings.Join(columns, ","))
+	if opt.IgnoreDuplicate {
+		qry += fmt.Sprintf(" ON CONFLICT(%s) DO NOTHING", tabledef.KeyField)
+	}
 	qry, args, err := sqlx.In(qry, values)
+	if err != nil {
+		return zeroKey, err
+	}
 	qry = tx.Rebind(qry)
 
 	_, err = tx.ExecContext(ctx, qry, args...)
@@ -236,6 +242,9 @@ func (p *postgresRepository[K, T]) InsertAll(ctx context.Context, values []T, op
 	if err != nil {
 		return nil, err
 	}
+	if opt.IgnoreDuplicate {
+		qry += fmt.Sprintf(" ON CONFLICT(%s) DO NOTHING", p.tableDef.KeyField)
+	}
 
 	tx, err := p.createTransaction(opt)
 	if err != nil {
@@ -247,8 +256,6 @@ func (p *postgresRepository[K, T]) InsertAll(ctx context.Context, values []T, op
 	}
 
 	qry = tx.Rebind(qry)
-	fmt.Println("qry:", qry)
-	fmt.Println("args:", args)
 	_, err = tx.ExecContext(ctx, qry, args...)
 	if err != nil {
 		return nil, wrapPostgresError(err)
@@ -299,13 +306,11 @@ func (p *postgresRepository[K, T]) Update(ctx context.Context, id K, keyvals map
 }
 
 func (p *postgresRepository[K, T]) Upsert(ctx context.Context, id K, value T, options ...QueryOption) error {
-
-	return nil
+	return fmt.Errorf("Upsert not implemented yet")
 }
 
 func (p *postgresRepository[K, T]) UpsertAll(ctx context.Context, values []T, options ...QueryOption) error {
-
-	return nil
+	return fmt.Errorf("UpsertAll not implemented yet")
 }
 
 func (p *postgresRepository[K, T]) Delete(ctx context.Context, id []K, options ...QueryOption) error {
