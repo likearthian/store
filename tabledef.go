@@ -22,7 +22,11 @@ func (td TabledDef) ColumnNames() []string {
 }
 
 func (td TabledDef) FullTableName() string {
-	return fmt.Sprintf("%s.%s", td.Schema, td.Name)
+	name := td.Name
+	if td.Schema != "" {
+		name = fmt.Sprintf("%s.%s", td.Schema, td.Name)
+	}
+	return name
 }
 
 type DBTable struct {

@@ -175,3 +175,17 @@ func parameterizedFilterCriteriaSlice(fieldname string, values interface{}) (str
 
 	return where, value, nil
 }
+
+func wrapSqliteError(err error) error {
+	errMap := map[error]error{
+		sql.ErrNoRows: ErrKeynotFound,
+	}
+
+	for g, e := range errMap {
+		if errors.Is(err, g) {
+			err = fmt.Errorf("%w. %s", e, err.Error())
+		}
+	}
+
+	return err
+}
