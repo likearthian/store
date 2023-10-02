@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jmoiron/sqlx"
+	"gopkg.in/guregu/null.v4"
 )
 
 type sqliteRepository[K comparable, T any] struct {
@@ -594,12 +595,12 @@ func sqliteGetColumns(db *sqlx.DB, schema, table string) ([]Column, error) {
 
 	qry = db.Rebind(qry)
 	type columnInfo struct {
-		CID       int     `db:"cid"`
-		Name      string  `db:"name"`
-		Type      string  `db:"type"`
-		NotNull   int     `db:"notnull"`
-		DfltValue float64 `db:"dflt_value"`
-		Pk        int     `db:"pk"`
+		CID       int        `db:"cid"`
+		Name      string     `db:"name"`
+		Type      string     `db:"type"`
+		NotNull   int        `db:"notnull"`
+		DfltValue null.Float `db:"dflt_value"`
+		Pk        int        `db:"pk"`
 	}
 
 	var cols []columnInfo
