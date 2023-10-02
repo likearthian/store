@@ -509,7 +509,7 @@ func sqliteCreateTableDef(mval reflect.Value) (TabledDef, error) {
 	}
 
 	var tbdef TabledDef
-	schema, table, colInfos, err := ParseModel(mval.Type())
+	_, table, colInfos, err := ParseModel(mval.Type())
 	if err != nil {
 		return tbdef, err
 	}
@@ -549,7 +549,6 @@ func sqliteCreateTableDef(mval reflect.Value) (TabledDef, error) {
 
 	return TabledDef{
 		Name:      table,
-		Schema:    schema,
 		KeyField:  keyField,
 		Columns:   cols,
 		CreateDDL: createDDL,
