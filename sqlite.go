@@ -34,7 +34,7 @@ func CreateSqliteRepository[K comparable, T any](db *sqlx.DB, options ...Reposit
 		return nil, err
 	}
 
-	cols, err := sqliteGetColumns(db, tb.Schema, tb.Name)
+	cols, err := sqliteGetColumns(db, tb.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +208,12 @@ func (sl *sqliteRepository[K, T]) Insert(ctx context.Context, value T, options .
 	}
 
 	tabledef := sl.tableDef
-	qry := fmt.Sprintf("INSERT INTO %s (%s) VALUES (?)", tabledef.FullTableName(), strings.Join(columns, ","))
+	ins := "INSERT"
+	if opt.IgnoreDuplicate {
+		ins = "INSERT OR IGNORE"
+	}
+
+	qry := fmt.Sprintf("%s INTO %s (%s) VALUES (?)", ins, tabledef.FullTableName(), strings.Join(columns, ","))
 	qry, args, _ := sqlx.In(qry, values)
 	qry = tx.Rebind(qry)
 
@@ -228,7 +233,7 @@ func (sl *sqliteRepository[K, T]) InsertAll(ctx context.Context, values []T, opt
 		op(opt)
 	}
 
-	qry, args, err := sl.createMultiInsertQuery(values)
+	qry, args, err := sl.createMultiInsertQuery(values, opt.IgnoreDuplicate)
 	if err != nil {
 		return nil, err
 	}
@@ -444,7 +449,7 @@ func (sl *sqliteRepository[K, T]) createTransaction(opt *queryOption) (*sqlx.Tx,
 	return sl.db.Beginx()
 }
 
-func (sl *sqliteRepository[K, T]) createMultiInsertQuery(values []T) (strSql string, args []any, err error) {
+func (sl *sqliteRepository[K, T]) createMultiInsertQuery(values []T, ignoreDup bool) (strSql string, args []any, err error) {
 	if len(values) == 0 {
 		err = fmt.Errorf("values is zero length slice")
 		return
@@ -469,13 +474,13 @@ func (sl *sqliteRepository[K, T]) createMultiInsertQuery(values []T) (strSql str
 
 	insertColumnNames := sl.columnNames
 
-	var insertFields []Column
-	for _, c := range insertColumnNames {
-		cname := strings.ToUpper(c)
-		if _, ok := columnMap[cname]; ok {
-			insertFields = append(insertFields, columnMap[cname])
-		}
-	}
+	// var insertFields []Column
+	// for _, c := range insertColumnNames {
+	// 	cname := strings.ToUpper(c)
+	// 	if _, ok := columnMap[cname]; ok {
+	// 		insertFields = append(insertFields, columnMap[cname])
+	// 	}
+	// }
 
 	var insertValues []string
 	for i := range values {
@@ -492,7 +497,11 @@ func (sl *sqliteRepository[K, T]) createMultiInsertQuery(values []T) (strSql str
 		insertValues = append(insertValues, "(?)")
 	}
 
-	strSql = fmt.Sprintf("INSERT INTO %s (%s) VALUES %s", tb.FullTableName(), strings.Join(insertColumnNames, ","), strings.Join(insertValues, ","))
+	ins := "INSERT"
+	if ignoreDup {
+		ins = "INSERT OR IGNORE"
+	}
+	strSql = fmt.Sprintf("%s INTO %s (%s) VALUES %s", ins, tb.FullTableName(), strings.Join(insertColumnNames, ","), strings.Join(insertValues, ","))
 
 	strSql, args, err = sqlx.In(strSql, args...)
 
@@ -589,7 +598,7 @@ func convertTypeToSqliteType(model reflect.Type) string {
 	}
 }
 
-func sqliteGetColumns(db *sqlx.DB, schema, table string) ([]Column, error) {
+func sqliteGetColumns(db *sqlx.DB, table string) ([]Column, error) {
 	qry := fmt.Sprintf("PRAGMA table_info(%s)", table)
 
 	qry = db.Rebind(qry)
