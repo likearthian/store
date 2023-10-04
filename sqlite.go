@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/csv"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
 
@@ -640,4 +642,81 @@ func CreateSqliteLimitOffsetSql(limit int, offset int64) string {
 	}
 
 	return qry.String()
+}
+
+func LoadCsvIntoSQLite[K comparable, T any](repo Repository[K, T], csvInput io.Reader, withHeader bool, Tx ...Transaction) error {
+	sq, ok := repo.(*sqliteRepository[K, T])
+	if !ok {
+		return fmt.Errorf("repository is not of type *sqliteRepository")
+	}
+
+	tb := sq.tableDef
+	colMap := make(map[string]int)
+	for i, name := range tb.ColumnNames() {
+		colMap[strings.ToLower(name)] = i
+	}
+
+	opt := &queryOption{}
+	if len(Tx) > 0 {
+		opt.Tx = Tx[0]
+	}
+
+	tx, err := sq.createTransaction(opt)
+	if err != nil {
+		return err
+	}
+
+	if opt.Tx == nil {
+		defer tx.Rollback()
+	}
+
+	plh := "?" + strings.Repeat(",?", len(tb.ColumnNames())-1)
+	stmt, err := tx.Preparex(fmt.Sprintf("INSERT INTO %s VALUES (%s)", tb.FullTableName(), plh))
+
+	rd := csv.NewReader(csvInput)
+
+	if withHeader {
+		line, err := rd.Read()
+		if err != nil {
+			return err
+		}
+
+		for i, col := range line {
+			name := strings.ToLower(strings.TrimSpace(col))
+			ncol, ok := colMap[name]
+			if !ok || i != ncol {
+				return fmt.Errorf("columns header doesn't match the table columns")
+			}
+		}
+
+		if len(line) != len(tb.ColumnNames()) {
+			return fmt.Errorf("column count in CSV does not match table")
+		}
+	}
+
+	for {
+		line, err := rd.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		vals := make([]any, len(line))
+		for i, val := range line {
+			vals[i] = strings.TrimSpace(val)
+		}
+
+		_, err = stmt.Exec(vals...)
+		if err != nil {
+			return err
+		}
+	}
+
+	if opt.Tx == nil {
+		return tx.Commit()
+	}
+
+	return nil
 }
