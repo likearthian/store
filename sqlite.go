@@ -510,6 +510,19 @@ func (sl *sqliteRepository[K, T]) createMultiInsertQuery(values []T, ignoreDup b
 	return
 }
 
+func (sl *sqliteRepository[K, T]) createInsertStatement(tx *sqlx.Tx, withInsertIgnore ...bool) (*sqlx.Stmt, error) {
+	ins := "INSERT"
+	if len(withInsertIgnore) > 0 {
+		if withInsertIgnore[0] {
+			ins = "INSERT OR IGNORE"
+		}
+	}
+	pl := "?" + strings.Repeat(",?", len(sl.columnNames)-1)
+	str := fmt.Sprintf("%s INTO %s VALUES(%s)", ins, sl.tableDef.Name, pl)
+
+	return tx.Preparex(str)
+}
+
 func sqliteCreateTableDef(mval reflect.Value) (TabledDef, error) {
 	if mval.Type().Kind() == reflect.Ptr {
 		mval = mval.Elem()
@@ -710,6 +723,44 @@ func LoadCsvIntoSQLite[K comparable, T any](repo Repository[K, T], csvInput io.R
 
 		_, err = stmt.Exec(vals...)
 		if err != nil {
+			return err
+		}
+	}
+
+	if opt.Tx == nil {
+		return tx.Commit()
+	}
+
+	return nil
+}
+
+func SQLiteStreamInsert[K comparable, T any](repo Repository[K, T], rows <-chan []any, Tx ...Transaction) error {
+	sq, ok := repo.(*sqliteRepository[K, T])
+	if !ok {
+		return fmt.Errorf("repo is not of type *sqliteRepository")
+	}
+
+	opt := &queryOption{}
+	if len(Tx) > 0 {
+		opt.Tx = Tx[0]
+	}
+
+	tx, err := sq.createTransaction(opt)
+	if err != nil {
+		return err
+	}
+
+	if opt.Tx == nil {
+		defer tx.Rollback()
+	}
+
+	stmt, err := sq.createInsertStatement(tx)
+	if err != nil {
+		return err
+	}
+
+	for args := range rows {
+		if _, err := stmt.Exec(args...); err != nil {
 			return err
 		}
 	}
