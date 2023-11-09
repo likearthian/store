@@ -163,8 +163,8 @@ func (p *postgresRepository[K, T]) SQLQuery(ctx context.Context, dest any, sqlSt
 	}
 
 	sqlStr = tx.Rebind(sqlStr)
-	//fmt.Println("qry:", sqlStr)
-	//fmt.Println("args:", args)
+	fmt.Println("qry:", sqlStr)
+	fmt.Println("args:", args)
 	if err := tx.SelectContext(ctx, dest, sqlStr, args...); err != nil {
 		return err
 	}
@@ -177,7 +177,31 @@ func (p *postgresRepository[K, T]) SQLQuery(ctx context.Context, dest any, sqlSt
 }
 
 func (p *postgresRepository[K, T]) SQLExec(ctx context.Context, sqlStr string, args []interface{}, options ...QueryOption) error {
-	return fmt.Errorf("not implemented yet")
+	opt := &queryOption{}
+	for _, op := range options {
+		op(opt)
+	}
+
+	tx, err := p.createTransaction(opt)
+	if err != nil {
+		return err
+	}
+
+	if opt.Tx == nil {
+		defer tx.Rollback()
+	}
+
+	sqlStr = tx.Rebind(sqlStr)
+
+	if _, err := tx.ExecContext(ctx, sqlStr, args...); err != nil {
+		return err
+	}
+
+	if opt.Tx == nil {
+		return tx.Commit()
+	}
+
+	return nil
 }
 
 func (p *postgresRepository[K, T]) Insert(ctx context.Context, value T, options ...QueryOption) (K, error) {
