@@ -124,6 +124,12 @@ func (p *postgresRepository[K, T]) Select(ctx context.Context, filterMap map[str
 		filter = "WHERE " + filter
 	}
 
+	sort := MakeSortClause(opt.Sorter, nil)
+
+	if sort != "" {
+		sort = fmt.Sprintf(" ORDER BY %s", sort)
+	}
+
 	tx, err := p.createTransaction(opt)
 	if err != nil {
 		return err
@@ -131,20 +137,21 @@ func (p *postgresRepository[K, T]) Select(ctx context.Context, filterMap map[str
 
 	if opt.Tx == nil {
 		defer tx.Rollback()
+		defer tx.Commit()
 	}
 
 	paging := CreatePgLimitOffsetSql(opt.Limit, opt.Offset)
 
 	columns := strings.Join(p.columnNames, ",")
 	tableDef := p.tableDef
-	qry := fmt.Sprintf("SELECT %s FROM %s.%s %s%s", columns, tableDef.Schema, tableDef.Name, filter, paging)
+	qry := fmt.Sprintf("SELECT %s FROM %s.%s %s%s%s", columns, tableDef.Schema, tableDef.Name, filter, sort, paging)
 	qry = tx.Rebind(qry)
 
 	if err := tx.SelectContext(ctx, dest, qry, argParam...); err != nil {
 		return wrapPostgresError(err)
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 func (p *postgresRepository[K, T]) SQLQuery(ctx context.Context, dest any, sqlStr string, args []interface{}, options ...QueryOption) error {
